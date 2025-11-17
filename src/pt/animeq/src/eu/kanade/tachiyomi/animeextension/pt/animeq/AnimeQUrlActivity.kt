@@ -8,7 +8,7 @@ import android.util.Log
 import kotlin.system.exitProcess
 
 /**
- * Springboard that accepts https://animeq.blog/<id> intents
+ * Springboard that accepts https://animeq.net/<id> intents
  * and redirects them to the main Aniyomi process.
  */
 class AnimeQUrlActivity : Activity() {
