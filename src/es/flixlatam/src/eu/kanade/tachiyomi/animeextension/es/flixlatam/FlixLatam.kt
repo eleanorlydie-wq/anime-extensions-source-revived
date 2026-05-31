@@ -383,8 +383,6 @@ class FlixLatam :
     }
 
     // ============================= Utilities ==============================
-    override fun String.toDate() = 0L
-
     @Serializable
     data class Item(
         val file_id: Int? = null,

@@ -4,7 +4,7 @@ import aniyomi.lib.googledriveplayerextractor.GoogleDrivePlayerExtractor
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
-import eu.kanade.tachiyomi.util.parseAs
+import keiyoushi.utils.parseAs
 import kotlinx.serialization.Serializable
 import okhttp3.FormBody
 import okhttp3.Headers
