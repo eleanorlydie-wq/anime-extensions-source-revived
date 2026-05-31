@@ -29,15 +29,11 @@ class FunAnimeTVRequest(
             }
     }
 
-    fun toBase64(json: Json): String {
-        return Base64.encodeToString(json.encodeToString(this).toByteArray(), Base64.NO_PADDING)
-    }
+    fun toBase64(json: Json): String = Base64.encodeToString(json.encodeToString(this).toByteArray(), Base64.NO_PADDING)
 
-    fun toRequestBody(json: Json): RequestBody {
-        return FormBody.Builder()
-            .add("data", toBase64(json))
-            .build()
-    }
+    fun toRequestBody(json: Json): RequestBody = FormBody.Builder()
+        .add("data", toBase64(json))
+        .build()
 }
 
 @Serializable

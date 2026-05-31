@@ -118,16 +118,14 @@ class OgladajAnime :
     override fun searchAnimeNextPageSelector(): String = throw UnsupportedOperationException()
 
     // =========================== Anime Details ============================
-    override fun animeDetailsParse(document: Document): SAnime {
-        return SAnime.create().apply {
-            status = parseStatus(document.select("div.col-12 > p.m-0:contains(Status)").text())
-            description = document.selectFirst("p#animeDesc")?.text()
-            genre = document.select("div.row > div.col-12 > span.badge[href^=/search/name/]").joinToString(", ") {
-                it.text()
-            }
-            author = document.select("div.row > div.col-12:contains(Studio:) > span.badge[href=#]").joinToString(", ") {
-                it.text()
-            }
+    override fun animeDetailsParse(document: Document): SAnime = SAnime.create().apply {
+        status = parseStatus(document.select("div.col-12 > p.m-0:contains(Status)").text())
+        description = document.selectFirst("p#animeDesc")?.text()
+        genre = document.select("div.row > div.col-12 > span.badge[href^=/search/name/]").joinToString(", ") {
+            it.text()
+        }
+        author = document.select("div.row > div.col-12:contains(Studio:) > span.badge[href=#]").joinToString(", ") {
+            it.text()
         }
     }
 
@@ -220,14 +218,12 @@ class OgladajAnime :
         val gen_time: Int,
     )
 
-    private fun parseStatus(statusString: String): Int {
-        return when {
-            statusString.lowercase().contains("emitowane") -> SAnime.ONGOING
-            statusString.lowercase().contains("zakończone") -> SAnime.COMPLETED
-            statusString.lowercase().contains("zapowiedź") -> SAnime.ON_HIATUS
-            statusString.lowercase().contains("deklaracja") -> SAnime.ON_HIATUS
-            else -> SAnime.UNKNOWN
-        }
+    private fun parseStatus(statusString: String): Int = when {
+        statusString.lowercase().contains("emitowane") -> SAnime.ONGOING
+        statusString.lowercase().contains("zakończone") -> SAnime.COMPLETED
+        statusString.lowercase().contains("zapowiedź") -> SAnime.ON_HIATUS
+        statusString.lowercase().contains("deklaracja") -> SAnime.ON_HIATUS
+        else -> SAnime.UNKNOWN
     }
 
     override fun List<Video>.sort(): List<Video> {

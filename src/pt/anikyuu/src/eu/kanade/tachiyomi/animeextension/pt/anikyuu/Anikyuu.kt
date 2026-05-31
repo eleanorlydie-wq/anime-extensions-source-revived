@@ -7,11 +7,12 @@ import eu.kanade.tachiyomi.animeextension.pt.anikyuu.extractors.StrmupExtractor
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.multisrc.animestream.AnimeStream
 
-class Anikyuu : AnimeStream(
-    "pt-BR",
-    "Anikyuu",
-    "https://anikyuu.to",
-) {
+class Anikyuu :
+    AnimeStream(
+        "pt-BR",
+        "Anikyuu",
+        "https://anikyuu.to",
+    ) {
     private val tag by lazy { javaClass.simpleName }
 
     override fun headersBuilder() = super.headersBuilder().add("Referer", baseUrl)

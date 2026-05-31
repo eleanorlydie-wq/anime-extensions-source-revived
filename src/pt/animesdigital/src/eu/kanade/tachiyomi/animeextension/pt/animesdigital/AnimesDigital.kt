@@ -79,9 +79,7 @@ class AnimesDigital :
     override fun latestUpdatesNextPageSelector() = "ul > li.next"
 
     // =============================== Search ===============================
-    override fun getFilterList(): AnimeFilterList {
-        return animesDigitalFilters.getFilterList()
-    }
+    override fun getFilterList(): AnimeFilterList = animesDigitalFilters.getFilterList()
 
     override suspend fun getSearchAnime(page: Int, query: String, filters: AnimeFilterList): AnimesPage {
         animesDigitalFilters.fetchFilters()

@@ -26,8 +26,7 @@ class DattebayoBR : AnimeHttpSource() {
         .add("X-Requested-With", "XMLHttpRequest")
 
     // Popular
-    override fun popularAnimeRequest(page: Int): Request =
-        GET(baseUrl, headers)
+    override fun popularAnimeRequest(page: Int): Request = GET(baseUrl, headers)
 
     override fun popularAnimeParse(response: Response): AnimesPage {
         val document = response.asJsoup()
@@ -55,19 +54,16 @@ class DattebayoBR : AnimeHttpSource() {
     }
 
     // Latest
-    override fun latestUpdatesRequest(page: Int): Request =
-        popularAnimeRequest(page)
+    override fun latestUpdatesRequest(page: Int): Request = popularAnimeRequest(page)
 
-    override fun latestUpdatesParse(response: Response): AnimesPage =
-        popularAnimeParse(response)
+    override fun latestUpdatesParse(response: Response): AnimesPage = popularAnimeParse(response)
 
     // Search
     override fun searchAnimeRequest(
         page: Int,
         query: String,
         filters: AnimeFilterList,
-    ): Request =
-        GET("$baseUrl/busca?busca=$query&page=$page", headers)
+    ): Request = GET("$baseUrl/busca?busca=$query&page=$page", headers)
 
     override fun searchAnimeParse(response: Response): AnimesPage {
         val document = response.asJsoup()

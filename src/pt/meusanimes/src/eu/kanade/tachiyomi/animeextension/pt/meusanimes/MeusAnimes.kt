@@ -39,8 +39,7 @@ class MeusAnimes : AnimeHttpSource() {
     }
 
     // Requests: Popular anime request
-    override fun popularAnimeRequest(page: Int): Request =
-        GET("$baseUrl/populares?page=$page", headers)
+    override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/populares?page=$page", headers)
 
     // Search anime request
     override fun searchAnimeRequest(
@@ -73,11 +72,9 @@ class MeusAnimes : AnimeHttpSource() {
     }
 
     // Latest updates use same parsing as popular
-    override fun latestUpdatesParse(response: Response): AnimesPage =
-        popularAnimeParse(response)
+    override fun latestUpdatesParse(response: Response): AnimesPage = popularAnimeParse(response)
 
-    override fun latestUpdatesRequest(page: Int): Request =
-        popularAnimeRequest(page)
+    override fun latestUpdatesRequest(page: Int): Request = popularAnimeRequest(page)
 
     // Parse search results from API
     override fun searchAnimeParse(response: Response): AnimesPage {
@@ -263,9 +260,7 @@ class MeusAnimes : AnimeHttpSource() {
     }
 
     // Videos: Video list request
-    override fun videoListRequest(episode: SEpisode): Request {
-        return GET(baseUrl + episode.url, headers)
-    }
+    override fun videoListRequest(episode: SEpisode): Request = GET(baseUrl + episode.url, headers)
 
     // Parse video list from episode page
     override fun videoListParse(response: Response): List<Video> {

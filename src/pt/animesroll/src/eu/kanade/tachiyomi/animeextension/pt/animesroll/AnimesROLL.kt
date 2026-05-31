@@ -16,11 +16,12 @@ import okhttp3.Response
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 
-class AnimesROLL : DooPlay(
-    "pt-BR",
-    "Animes ROLL",
-    "https://anroll.tv",
-) {
+class AnimesROLL :
+    DooPlay(
+        "pt-BR",
+        "Animes ROLL",
+        "https://anroll.tv",
+    ) {
 
     private val tag by lazy { javaClass.simpleName }
 
@@ -40,11 +41,9 @@ class AnimesROLL : DooPlay(
     // =========================== Anime Details ============================
     override val additionalInfoSelector = "div.wp-content"
 
-    override fun Document.getDescription(): String {
-        return select("$additionalInfoSelector p")
-            .eachText()
-            .joinToString("\n")
-    }
+    override fun Document.getDescription(): String = select("$additionalInfoSelector p")
+        .eachText()
+        .joinToString("\n")
 
     override fun animeDetailsParse(document: Document): SAnime {
         val doc = getRealAnimeDoc(document)

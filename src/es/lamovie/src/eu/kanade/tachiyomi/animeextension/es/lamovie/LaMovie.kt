@@ -218,27 +218,25 @@ class LaMovie :
         return prioritizedEmbeds.flatMap(::resolveEmbedVideos)
     }
 
-    private fun resolveEmbedVideos(embed: EmbedItem): List<Video> {
-        return runCatching {
-            val prefix = buildString {
-                embed.language?.takeIf(String::isNotBlank)?.let { append("${it.uppercase(Locale.US)} | ") }
-                embed.quality?.takeIf(String::isNotBlank)?.let { append(" - $it") }
-            }
+    private fun resolveEmbedVideos(embed: EmbedItem): List<Video> = runCatching {
+        val prefix = buildString {
+            embed.language?.takeIf(String::isNotBlank)?.let { append("${it.uppercase(Locale.US)} | ") }
+            embed.quality?.takeIf(String::isNotBlank)?.let { append(" - $it") }
+        }
 
-            when (embed.serverKey()) {
-                SERVER_KEY_DOOD -> doodExtractor.videosFromUrl(embed.url, "$prefix - Doodstream")
-                SERVER_KEY_VOE -> voeExtractor.videosFromUrl(embed.url, "$prefix - Voe")
-                SERVER_KEY_MP4UPLOAD -> mp4uploadExtractor.videosFromUrl(embed.url, headers, "$prefix - Mp4upload")
-                SERVER_KEY_STREAMHIDE -> streamHideVidExtractor.videosFromUrl(embed.url) { quality -> "StreamHide - $quality - $prefix" }
-                SERVER_KEY_STREAMWISH -> streamWishExtractor.videosFromUrl(embed.url, prefix)
-                SERVER_KEY_YOURUPLOAD -> yourUploadExtractor.videoFromUrl(embed.url, headers, "$prefix - YourUpload")
-                SERVER_KEY_FILEMOON -> filemoonExtractor.videosFromUrl(embed.url, "$prefix - Filemoon")
-                SERVER_KEY_GOODSTREAM -> goodStreamExtractor.videosFromUrl(embed.url, "$prefix - GoodStream")
-                SERVER_KEY_LAMOVIE -> lamovieEmbedExtractor.videosFromUrl(embed.url, "$prefix - HLS")
-                else -> emptyList()
-            }
-        }.getOrElse { emptyList() }
-    }
+        when (embed.serverKey()) {
+            SERVER_KEY_DOOD -> doodExtractor.videosFromUrl(embed.url, "$prefix - Doodstream")
+            SERVER_KEY_VOE -> voeExtractor.videosFromUrl(embed.url, "$prefix - Voe")
+            SERVER_KEY_MP4UPLOAD -> mp4uploadExtractor.videosFromUrl(embed.url, headers, "$prefix - Mp4upload")
+            SERVER_KEY_STREAMHIDE -> vidHideExtractor.videosFromUrl(embed.url) { quality -> "StreamHide - $quality - $prefix" }
+            SERVER_KEY_STREAMWISH -> streamWishExtractor.videosFromUrl(embed.url, prefix)
+            SERVER_KEY_YOURUPLOAD -> yourUploadExtractor.videoFromUrl(embed.url, headers, "$prefix - YourUpload")
+            SERVER_KEY_FILEMOON -> filemoonExtractor.videosFromUrl(embed.url, "$prefix - Filemoon")
+            SERVER_KEY_GOODSTREAM -> goodStreamExtractor.videosFromUrl(embed.url, "$prefix - GoodStream")
+            SERVER_KEY_LAMOVIE -> lamovieEmbedExtractor.videosFromUrl(embed.url, "$prefix - HLS")
+            else -> emptyList()
+        }
+    }.getOrElse { emptyList() }
 
     override fun List<Video>.sort(): List<Video> {
         val preferredQuality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT) ?: PREF_QUALITY_DEFAULT
@@ -550,12 +548,11 @@ class LaMovie :
         }
     }
 
-    private fun primaryImageHosts(): List<String> =
-        (STATIC_IMAGE_HOSTS + baseUrl)
-            .map { it.trim() }
-            .filter { it.isNotEmpty() }
-            .map { it.trimEnd('/') }
-            .distinct()
+    private fun primaryImageHosts(): List<String> = (STATIC_IMAGE_HOSTS + baseUrl)
+        .map { it.trim() }
+        .filter { it.isNotEmpty() }
+        .map { it.trimEnd('/') }
+        .distinct()
 
     private fun buildAnimeUrl(post: PostDto): String {
         val slug = post.slug.ifBlank { post.id.toString() }
@@ -747,24 +744,20 @@ class LaMovie :
         return normalizeListingType(stored)
     }
 
-    private fun normalizeListingType(raw: String): String {
-        return when (raw.lowercase(Locale.US)) {
-            "movie", "movies", "peliculas", "películas" -> "movies"
-            "tv-show", "tvshows", "tv shows", "series" -> "tvshows"
-            "anime", "animes" -> "animes"
-            else -> raw.ifBlank { DEFAULT_LISTING_TYPE }
-        }
+    private fun normalizeListingType(raw: String): String = when (raw.lowercase(Locale.US)) {
+        "movie", "movies", "peliculas", "películas" -> "movies"
+        "tv-show", "tvshows", "tv shows", "series" -> "tvshows"
+        "anime", "animes" -> "animes"
+        else -> raw.ifBlank { DEFAULT_LISTING_TYPE }
     }
 
-    private fun normalizeLanguagePreference(raw: String): String {
-        return when (raw.lowercase(Locale.US)) {
-            "any", "none", "sin preferencia", "todos" -> LANGUAGE_CODE_ANY
-            "latino", "latam", "es-lat", "esp-lat", "es_lat" -> LANGUAGE_CODE_LATINO
-            "castellano", "esp", "es-es", "españa", "esp-es", "spanish", "es" -> LANGUAGE_CODE_CASTELLANO
-            "sub", "subs", "subtitulado", "subtitulos", "vose" -> LANGUAGE_CODE_SUB
-            "english", "ingles", "inglés", "eng", "en" -> LANGUAGE_CODE_ENGLISH
-            else -> raw.ifBlank { LANGUAGE_CODE_ANY }
-        }
+    private fun normalizeLanguagePreference(raw: String): String = when (raw.lowercase(Locale.US)) {
+        "any", "none", "sin preferencia", "todos" -> LANGUAGE_CODE_ANY
+        "latino", "latam", "es-lat", "esp-lat", "es_lat" -> LANGUAGE_CODE_LATINO
+        "castellano", "esp", "es-es", "españa", "esp-es", "spanish", "es" -> LANGUAGE_CODE_CASTELLANO
+        "sub", "subs", "subtitulado", "subtitulos", "vose" -> LANGUAGE_CODE_SUB
+        "english", "ingles", "inglés", "eng", "en" -> LANGUAGE_CODE_ENGLISH
+        else -> raw.ifBlank { LANGUAGE_CODE_ANY }
     }
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {

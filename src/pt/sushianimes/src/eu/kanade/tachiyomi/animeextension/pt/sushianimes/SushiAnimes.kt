@@ -1,6 +1,5 @@
 package eu.kanade.tachiyomi.animeextension.pt.sushianimes
 
-import aniyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.SAnime
@@ -53,8 +52,7 @@ class SushiAnimes : ParsedAnimeHttpSource() {
     override fun popularAnimeNextPageSelector() = null
 
     // =============================== Latest ===============================
-    override fun latestUpdatesRequest(page: Int): Request =
-        GET("$baseUrl/episodios?page=$page", headers)
+    override fun latestUpdatesRequest(page: Int): Request = GET("$baseUrl/episodios?page=$page", headers)
 
     override fun latestUpdatesSelector() = ".episode-grid a.list-movie:not(:has(.hentai-list-media))"
 
@@ -71,15 +69,13 @@ class SushiAnimes : ParsedAnimeHttpSource() {
         page: Int,
         query: String,
         filters: AnimeFilterList,
-    ): AnimesPage {
-        return if (query.startsWith(PREFIX_SEARCH)) {
-            val path = query.removePrefix(PREFIX_SEARCH)
-            client.newCall(GET("$baseUrl/$path"))
-                .awaitSuccess()
-                .use(::searchAnimeByIdParse)
-        } else {
-            super.getSearchAnime(page, query, filters)
-        }
+    ): AnimesPage = if (query.startsWith(PREFIX_SEARCH)) {
+        val path = query.removePrefix(PREFIX_SEARCH)
+        client.newCall(GET("$baseUrl/$path"))
+            .awaitSuccess()
+            .use(::searchAnimeByIdParse)
+    } else {
+        super.getSearchAnime(page, query, filters)
     }
 
     private fun searchAnimeByIdParse(response: Response): AnimesPage {
@@ -185,17 +181,11 @@ class SushiAnimes : ParsedAnimeHttpSource() {
         return listOf(Video(videoUrl, "Sushi Animes", videoUrl))
     }
 
-    override fun videoListSelector(): String {
-        throw UnsupportedOperationException()
-    }
+    override fun videoListSelector(): String = throw UnsupportedOperationException()
 
-    override fun videoFromElement(element: Element): Video {
-        throw UnsupportedOperationException()
-    }
+    override fun videoFromElement(element: Element): Video = throw UnsupportedOperationException()
 
-    override fun videoUrlParse(document: Document): String {
-        throw UnsupportedOperationException()
-    }
+    override fun videoUrlParse(document: Document): String = throw UnsupportedOperationException()
 
     // ============================= Utilities ==============================
     private fun getRealDoc(document: Document): Document {
@@ -213,12 +203,10 @@ class SushiAnimes : ParsedAnimeHttpSource() {
      * Usa regex para achar o valor de `"name": "..."` e escapar apenas as aspas
      * internas não escapadas dentro desse valor.
      */
-    private fun sanitizeLdJsonNames(input: String): String {
-        return NAME_VALUE_REGEX.replace(input) { match ->
-            val value = match.groupValues[1]
-            val escaped = value.replace(Regex("(?<!\\\\)\""), "\\\\\"")
-            "\"name\": \"$escaped\""
-        }
+    private fun sanitizeLdJsonNames(input: String): String = NAME_VALUE_REGEX.replace(input) { match ->
+        val value = match.groupValues[1]
+        val escaped = value.replace(Regex("(?<!\\\\)\""), "\\\\\"")
+        "\"name\": \"$escaped\""
     }
 
     companion object {

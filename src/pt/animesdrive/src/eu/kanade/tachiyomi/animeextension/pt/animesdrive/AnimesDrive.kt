@@ -168,24 +168,21 @@ class AnimesDrive :
     private var hasFetchedGenresArray = false
 
     override val genreFilterHeader = "Apenas um tipo de filtro por vez"
-    override fun genresListRequest() =
-        GET("$baseUrl/wp-json/wp/v2/genres?per_page=100&_fields[]=name&_fields[]=link")
+    override fun genresListRequest() = GET("$baseUrl/wp-json/wp/v2/genres?per_page=100&_fields[]=name&_fields[]=link")
 
-    override fun getFilterList(): AnimeFilterList {
-        return if (hasFetchedGenresArray) {
-            AnimeFilterList(
-                AnimeFilter.Header(genreFilterHeader),
-                AudioFilter(),
-                FetchedGenresFilter(genresListMessage, genresArray),
-                AnimeFilter.Separator(),
-                OrderByFilter(),
-                OrderFilter(),
-            )
-        } else if (fetchGenres) {
-            AnimeFilterList(AnimeFilter.Header(genresMissingWarning))
-        } else {
-            AnimeFilterList()
-        }
+    override fun getFilterList(): AnimeFilterList = if (hasFetchedGenresArray) {
+        AnimeFilterList(
+            AnimeFilter.Header(genreFilterHeader),
+            AudioFilter(),
+            FetchedGenresFilter(genresListMessage, genresArray),
+            AnimeFilter.Separator(),
+            OrderByFilter(),
+            OrderFilter(),
+        )
+    } else if (fetchGenres) {
+        AnimeFilterList(AnimeFilter.Header(genresMissingWarning))
+    } else {
+        AnimeFilterList()
     }
 
     override fun fetchGenresList() {
@@ -219,40 +216,42 @@ class AnimesDrive :
         }
     }
 
-    private class AudioFilter : UriPartFilter(
-        "Áudio",
-        arrayOf(
-            Pair("Todos", ""),
-            Pair("Dublado", "tipo/dublado"),
-            Pair("Legendado", "tipo/legendado"),
-        ),
-    )
+    private class AudioFilter :
+        UriPartFilter(
+            "Áudio",
+            arrayOf(
+                Pair("Todos", ""),
+                Pair("Dublado", "tipo/dublado"),
+                Pair("Legendado", "tipo/legendado"),
+            ),
+        )
 
     private abstract class SelectFilter(
         name: String,
         private val options: Array<Pair<String, String>>,
-    ) :
-        AnimeFilter.Select<String>(name, options.map { it.first }.toTypedArray()) {
+    ) : AnimeFilter.Select<String>(name, options.map { it.first }.toTypedArray()) {
         val selected
             get() = options[state].second
     }
 
-    private class OrderByFilter : SelectFilter(
-        "Ordenar Por",
-        arrayOf(
-            Pair("Data de Criação", "date"),
-            Pair("Data de Modificação", "modified"),
-            Pair("Título", "title"),
-        ),
-    )
+    private class OrderByFilter :
+        SelectFilter(
+            "Ordenar Por",
+            arrayOf(
+                Pair("Data de Criação", "date"),
+                Pair("Data de Modificação", "modified"),
+                Pair("Título", "title"),
+            ),
+        )
 
-    private class OrderFilter : SelectFilter(
-        "Ordem",
-        arrayOf(
-            Pair("Descendente", "desc"),
-            Pair("Ascendente", "asc"),
-        ),
-    )
+    private class OrderFilter :
+        SelectFilter(
+            "Ordem",
+            arrayOf(
+                Pair("Descendente", "desc"),
+                Pair("Ascendente", "asc"),
+            ),
+        )
 
     // ============================= Utilities ==============================
     override fun List<Video>.sort(): List<Video> {

@@ -5,11 +5,12 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.multisrc.animestream.AnimeStream
 import org.jsoup.nodes.Element
 
-class AnimeIto : AnimeStream(
-    "pt-BR",
-    "Animeito",
-    "https://animesonline.io",
-) {
+class AnimeIto :
+    AnimeStream(
+        "pt-BR",
+        "Animeito",
+        "https://animesonline.io",
+    ) {
     override fun headersBuilder() = super.headersBuilder().add("Referer", baseUrl)
 
     // ============================ Video Links =============================
@@ -26,10 +27,8 @@ class AnimeIto : AnimeStream(
     }
 
     private val animeitoExtractor by lazy { AnimeItoExtractor(client, headers) }
-    override fun getVideoList(url: String, name: String): List<Video> {
-        return when {
-            "anidrive.click" in url -> animeitoExtractor.videosFromUrl(url)
-            else -> emptyList()
-        }
+    override fun getVideoList(url: String, name: String): List<Video> = when {
+        "anidrive.click" in url -> animeitoExtractor.videosFromUrl(url)
+        else -> emptyList()
     }
 }

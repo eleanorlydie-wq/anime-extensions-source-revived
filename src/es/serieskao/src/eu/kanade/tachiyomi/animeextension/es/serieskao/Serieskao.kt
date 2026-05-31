@@ -95,18 +95,16 @@ open class Serieskao :
 
     override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/series?page=$page")
 
-    override fun popularAnimeFromElement(element: Element): SAnime {
-        return SAnime.create().apply {
-            setUrlWithoutDomain(element.attr("href"))
-            val rawTitle = element.selectFirst(".poster-card__title")?.text().orEmpty()
-            val normalizedTitle = rawTitle.takeIf { it.isNotBlank() }
-                ?: element.attr("title").removePrefix("VER").trim()
-            title = normalizedTitle.ifBlank { element.text() }
+    override fun popularAnimeFromElement(element: Element): SAnime = SAnime.create().apply {
+        setUrlWithoutDomain(element.attr("href"))
+        val rawTitle = element.selectFirst(".poster-card__title")?.text().orEmpty()
+        val normalizedTitle = rawTitle.takeIf { it.isNotBlank() }
+            ?: element.attr("title").removePrefix("VER").trim()
+        title = normalizedTitle.ifBlank { element.text() }
 
-            val image = element.selectFirst("img")
-            val thumb = image?.attr("src").orEmpty().ifBlank { image?.attr("data-src").orEmpty() }
-            thumbnail_url = thumb.replace("/w154/", "/w500/")
-        }
+        val image = element.selectFirst("img")
+        val thumb = image?.attr("src").orEmpty().ifBlank { image?.attr("data-src").orEmpty() }
+        thumbnail_url = thumb.replace("/w154/", "/w500/")
     }
 
     override fun popularAnimeNextPageSelector(): String = "a.page-link"
@@ -275,12 +273,10 @@ open class Serieskao :
             return substring(start + 1, end).trim()
         }
 
-        fun String.trimMatchingQuotes(): String {
-            return if ((startsWith('"') && endsWith('"')) || (startsWith('\'') && endsWith('\''))) {
-                substring(1, length - 1)
-            } else {
-                this
-            }
+        fun String.trimMatchingQuotes(): String = if ((startsWith('"') && endsWith('"')) || (startsWith('\'') && endsWith('\''))) {
+            substring(1, length - 1)
+        } else {
+            this
         }
 
         while (true) {
@@ -457,16 +453,14 @@ open class Serieskao :
 
     override fun searchAnimeSelector(): String = popularAnimeSelector()
 
-    override fun animeDetailsParse(document: Document): SAnime {
-        return SAnime.create().apply {
-            title = document.selectFirst("h1.m-b-5")?.text()?.ifBlank { "Sin título" } ?: "Sin título"
-            thumbnail_url = document.selectFirst("div.card-body div.row div.col-sm-3 img.img-fluid")
-                ?.attr("src")?.replace("/w154/", "/w500/")
-                ?: ""
-            description = document.selectFirst("div.col-sm-4 div.text-large")?.ownText() ?: ""
-            genre = document.select("div.p-v-20.p-h-15.text-center a span").joinToString { it.text() }
-            status = SAnime.COMPLETED
-        }
+    override fun animeDetailsParse(document: Document): SAnime = SAnime.create().apply {
+        title = document.selectFirst("h1.m-b-5")?.text()?.ifBlank { "Sin título" } ?: "Sin título"
+        thumbnail_url = document.selectFirst("div.card-body div.row div.col-sm-3 img.img-fluid")
+            ?.attr("src")?.replace("/w154/", "/w500/")
+            ?: ""
+        description = document.selectFirst("div.col-sm-4 div.text-large")?.ownText() ?: ""
+        genre = document.select("div.p-v-20.p-h-15.text-center a span").joinToString { it.text() }
+        status = SAnime.COMPLETED
     }
 
     override fun latestUpdatesNextPageSelector() = throw UnsupportedOperationException()

@@ -35,7 +35,9 @@ import uy.kohesive.injekt.injectLazy
 import java.security.MessageDigest
 import kotlin.time.Duration.Companion.seconds
 
-class FunAnimeTV : ConfigurableAnimeSource, AnimeHttpSource() {
+class FunAnimeTV :
+    AnimeHttpSource(),
+    ConfigurableAnimeSource {
 
     override val name = "Fun Anime TV"
 
@@ -194,8 +196,7 @@ class FunAnimeTV : ConfigurableAnimeSource, AnimeHttpSource() {
 
     // =========================== Anime Details ============================
 
-    override fun animeDetailsParse(response: Response): SAnime =
-        throw UnsupportedOperationException()
+    override fun animeDetailsParse(response: Response): SAnime = throw UnsupportedOperationException()
 
     override suspend fun getAnimeDetails(anime: SAnime): SAnime {
         val url = anime.url.toHttpUrl()
@@ -350,9 +351,7 @@ class FunAnimeTV : ConfigurableAnimeSource, AnimeHttpSource() {
         )
     }
 
-    fun generateSalt(): String {
-        return (1..900).random().toString()
-    }
+    fun generateSalt(): String = (1..900).random().toString()
 
     /**
      * Calcula MD5 hash de uma string

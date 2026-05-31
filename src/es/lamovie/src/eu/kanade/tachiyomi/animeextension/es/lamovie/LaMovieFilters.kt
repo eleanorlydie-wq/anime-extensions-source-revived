@@ -232,25 +232,29 @@ internal object LaMovieFilters {
     class OrderByFilter : QueryPartFilter("Ordenar por", ORDER_BY_OPTIONS)
     class OrderDirectionFilter : QueryPartFilter("Dirección", ORDER_DIRECTION_OPTIONS)
 
-    class GenresFilter : CheckBoxFilterList(
-        "Géneros",
-        GENRE_OPTIONS.map { CheckBoxItem(it.first) },
-    )
+    class GenresFilter :
+        CheckBoxFilterList(
+            "Géneros",
+            GENRE_OPTIONS.map { CheckBoxItem(it.first) },
+        )
 
-    class CountriesFilter : CheckBoxFilterList(
-        "Países",
-        COUNTRY_OPTIONS.map { CheckBoxItem(it.first) },
-    )
+    class CountriesFilter :
+        CheckBoxFilterList(
+            "Países",
+            COUNTRY_OPTIONS.map { CheckBoxItem(it.first) },
+        )
 
-    class ProvidersFilter : CheckBoxFilterList(
-        "Proveedores",
-        PROVIDER_OPTIONS.map { CheckBoxItem(it.first) },
-    )
+    class ProvidersFilter :
+        CheckBoxFilterList(
+            "Proveedores",
+            PROVIDER_OPTIONS.map { CheckBoxItem(it.first) },
+        )
 
-    class YearsFilter : CheckBoxFilterList(
-        "Años",
-        YEAR_OPTIONS.map { CheckBoxItem(it.first) },
-    )
+    class YearsFilter :
+        CheckBoxFilterList(
+            "Años",
+            YEAR_OPTIONS.map { CheckBoxItem(it.first) },
+        )
 
     data class FilterSearchParams(
         val type: String = ANY,
@@ -289,9 +293,7 @@ internal object LaMovieFilters {
 
     private inline fun <reified R> AnimeFilterList.findInstance(): R? = firstOrNull { it is R } as? R
 
-    private inline fun <reified R : QueryPartFilter> AnimeFilterList.asQueryPart(): String {
-        return findInstance<R>()?.toQueryPart() ?: ANY
-    }
+    private inline fun <reified R : QueryPartFilter> AnimeFilterList.asQueryPart(): String = findInstance<R>()?.toQueryPart() ?: ANY
 
     private inline fun <reified R : CheckBoxFilterList> AnimeFilterList.parseCheckboxIds(
         options: Array<Pair<String, Int>>,

@@ -18,11 +18,12 @@ import okhttp3.Response
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 
-class AnimesOnlineCloud : DooPlay(
-    "pt-BR",
-    "Animes Online Cloud",
-    "https://animesonline.cloud",
-) {
+class AnimesOnlineCloud :
+    DooPlay(
+        "pt-BR",
+        "Animes Online Cloud",
+        "https://animesonline.cloud",
+    ) {
     // ============================== Popular ===============================
     override fun popularAnimeRequest(page: Int) = GET("$baseUrl/anime", headers)
 
@@ -61,19 +62,15 @@ class AnimesOnlineCloud : DooPlay(
     // =========================== Anime Details ============================
     override val additionalInfoSelector = "div.wp-content"
 
-    override fun Document.getDescription(): String {
-        return select("$additionalInfoSelector p")
-            .first { !it.text().contains("Título Alternativo") }
-            ?.let { it.text() + "\n" }
-            ?: ""
-    }
+    override fun Document.getDescription(): String = select("$additionalInfoSelector p")
+        .first { !it.text().contains("Título Alternativo") }
+        ?.let { it.text() + "\n" }
+        ?: ""
 
-    fun Document.getAlternativeTitle(): String {
-        return select("$additionalInfoSelector p")
-            .first { it.text().contains("Título Alternativo") }
-            ?.let { it.text() + "\n" }
-            ?: ""
-    }
+    fun Document.getAlternativeTitle(): String = select("$additionalInfoSelector p")
+        .first { it.text().contains("Título Alternativo") }
+        ?.let { it.text() + "\n" }
+        ?: ""
 
     override fun animeDetailsParse(document: Document): SAnime {
         val doc = getRealAnimeDoc(document)
@@ -170,24 +167,21 @@ class AnimesOnlineCloud : DooPlay(
     private var hasFetchedGenresArray = false
 
     override val genreFilterHeader = "Apenas um tipo de filtro por vez"
-    override fun genresListRequest() =
-        GET("$baseUrl/wp-json/wp/v2/genres?per_page=100&_fields[]=name&_fields[]=link")
+    override fun genresListRequest() = GET("$baseUrl/wp-json/wp/v2/genres?per_page=100&_fields[]=name&_fields[]=link")
 
-    override fun getFilterList(): AnimeFilterList {
-        return if (hasFetchedGenresArray) {
-            AnimeFilterList(
-                AnimeFilter.Header(genreFilterHeader),
-                AudioFilter(),
-                FetchedGenresFilter(genresListMessage, genresArray),
-                AnimeFilter.Separator(),
-                OrderByFilter(),
-                OrderFilter(),
-            )
-        } else if (fetchGenres) {
-            AnimeFilterList(AnimeFilter.Header(genresMissingWarning))
-        } else {
-            AnimeFilterList()
-        }
+    override fun getFilterList(): AnimeFilterList = if (hasFetchedGenresArray) {
+        AnimeFilterList(
+            AnimeFilter.Header(genreFilterHeader),
+            AudioFilter(),
+            FetchedGenresFilter(genresListMessage, genresArray),
+            AnimeFilter.Separator(),
+            OrderByFilter(),
+            OrderFilter(),
+        )
+    } else if (fetchGenres) {
+        AnimeFilterList(AnimeFilter.Header(genresMissingWarning))
+    } else {
+        AnimeFilterList()
     }
 
     override fun fetchGenresList() {
@@ -221,40 +215,42 @@ class AnimesOnlineCloud : DooPlay(
         }
     }
 
-    private class AudioFilter : UriPartFilter(
-        "Áudio",
-        arrayOf(
-            Pair("Todos", ""),
-            Pair("Dublado", "tipo/dublado"),
-            Pair("Legendado", "tipo/legendado"),
-        ),
-    )
+    private class AudioFilter :
+        UriPartFilter(
+            "Áudio",
+            arrayOf(
+                Pair("Todos", ""),
+                Pair("Dublado", "tipo/dublado"),
+                Pair("Legendado", "tipo/legendado"),
+            ),
+        )
 
     private abstract class SelectFilter(
         name: String,
         private val options: Array<Pair<String, String>>,
-    ) :
-        AnimeFilter.Select<String>(name, options.map { it.first }.toTypedArray()) {
+    ) : AnimeFilter.Select<String>(name, options.map { it.first }.toTypedArray()) {
         val selected
             get() = options[state].second
     }
 
-    private class OrderByFilter : SelectFilter(
-        "Ordenar Por",
-        arrayOf(
-            Pair("Data de Criação", "date"),
-            Pair("Data de Modificação", "modified"),
-            Pair("Título", "title"),
-        ),
-    )
+    private class OrderByFilter :
+        SelectFilter(
+            "Ordenar Por",
+            arrayOf(
+                Pair("Data de Criação", "date"),
+                Pair("Data de Modificação", "modified"),
+                Pair("Título", "title"),
+            ),
+        )
 
-    private class OrderFilter : SelectFilter(
-        "Ordem",
-        arrayOf(
-            Pair("Descendente", "desc"),
-            Pair("Ascendente", "asc"),
-        ),
-    )
+    private class OrderFilter :
+        SelectFilter(
+            "Ordem",
+            arrayOf(
+                Pair("Descendente", "desc"),
+                Pair("Ascendente", "asc"),
+            ),
+        )
 
     // ============================= Utilities ==============================
     override fun List<Video>.sort(): List<Video> {

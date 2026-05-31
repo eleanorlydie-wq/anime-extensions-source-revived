@@ -142,8 +142,10 @@ fun String.encodeUrlPath(): String {
         .joinToString("/") { segment ->
             if (segment.isEmpty()) {
                 ""
-            } else URLEncoder.encode(segment, StandardCharsets.UTF_8.toString())
-                .replace("+", "%20")
+            } else {
+                URLEncoder.encode(segment, StandardCharsets.UTF_8.toString())
+                    .replace("+", "%20")
+            }
         }
 
     return URI(

@@ -31,7 +31,7 @@ class StreamupExtractor(private val client: OkHttpClient) {
             if (encodedMatch != null && shiftMatch != null) {
                 streamUrl = decodePrintable95(
                     encodedMatch.groupValues[1],
-                    shiftMatch.groupValues[1].toInt()
+                    shiftMatch.groupValues[1].toInt(),
                 )
             }
         }
@@ -75,41 +75,39 @@ class StreamupExtractor(private val client: OkHttpClient) {
         return videos
     }
 
-    private fun decodePrintable95(encoded: String, shift: Int): String {
-        return try {
-            val bytes = encoded.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
-            val intermediate = String(bytes, Charsets.ISO_8859_1)
-            val decoded = StringBuilder()
+    private fun decodePrintable95(encoded: String, shift: Int): String = try {
+        val bytes = encoded.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+        val intermediate = String(bytes, Charsets.ISO_8859_1)
+        val decoded = StringBuilder()
 
-            intermediate.forEachIndexed { index, char ->
-                val s = char.code - 32
-                var i = (s - shift - index) % 95
-                if (i < 0) i += 95
-                decoded.append((i + 32).toChar())
-            }
-            decoded.toString()
-        } catch (e: Exception) { "" }
+        intermediate.forEachIndexed { index, char ->
+            val s = char.code - 32
+            var i = (s - shift - index) % 95
+            if (i < 0) i += 95
+            decoded.append((i + 32).toChar())
+        }
+        decoded.toString()
+    } catch (e: Exception) {
+        ""
     }
 
     private fun decryptAES(encryptedDataB64: String, keyB64: String): String? {
+        val key = Base64.decode(keyB64, Base64.DEFAULT)
+        val encryptedData = Base64.decode(encryptedDataB64, Base64.DEFAULT)
 
-            val key = Base64.decode(keyB64, Base64.DEFAULT)
-            val encryptedData = Base64.decode(encryptedDataB64, Base64.DEFAULT)
+        val iv = encryptedData.copyOfRange(0, 16)
+        val ciphertext = encryptedData.copyOfRange(16, encryptedData.size)
 
-            val iv = encryptedData.copyOfRange(0, 16)
-            val ciphertext = encryptedData.copyOfRange(16, encryptedData.size)
+        val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
+        cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), IvParameterSpec(iv))
 
-            val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
-            cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), IvParameterSpec(iv))
+        val decryptedStr = String(cipher.doFinal(ciphertext), Charsets.UTF_8)
 
-            val decryptedStr = String(cipher.doFinal(ciphertext), Charsets.UTF_8)
-
-            return decryptedStr.parseAs<StreamupResponse>().streaming_url
-
+        return decryptedStr.parseAs<StreamupResponse>().streaming_url
     }
 }
 
-    @Serializable
-    data class StreamupResponse(
-        val streaming_url: String? = null
-    )
+@Serializable
+data class StreamupResponse(
+    val streaming_url: String? = null,
+)
