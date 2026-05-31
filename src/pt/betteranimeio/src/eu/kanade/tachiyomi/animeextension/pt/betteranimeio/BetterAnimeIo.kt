@@ -5,7 +5,7 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.multisrc.dooplay.DooPlay
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.util.asJsoup
-import eu.kanade.tachiyomi.util.parallelCatchingFlatMapBlocking
+import keiyoushi.utils.parallelCatchingFlatMapBlocking
 import kotlinx.serialization.json.Json
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request

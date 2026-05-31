@@ -1,10 +1,10 @@
 package eu.kanade.tachiyomi.animeextension.pt.anikyuu
 
 import android.util.Log
+import aniyomi.lib.filemoonextractor.FilemoonExtractor
 import eu.kanade.tachiyomi.animeextension.pt.anikyuu.extractors.ByseExtractor
 import eu.kanade.tachiyomi.animeextension.pt.anikyuu.extractors.StrmupExtractor
 import eu.kanade.tachiyomi.animesource.model.Video
-import eu.kanade.tachiyomi.lib.filemoonextractor.FilemoonExtractor
 import eu.kanade.tachiyomi.multisrc.animestream.AnimeStream
 
 class Anikyuu : AnimeStream(
@@ -17,15 +17,14 @@ class Anikyuu : AnimeStream(
     override fun headersBuilder() = super.headersBuilder().add("Referer", baseUrl)
 
     // ============================ Video Links =============================
-    override val prefQualityValues = arrayOf("1080p", "720p", "480p", "360p", "240p")
-    override val prefQualityEntries = prefQualityValues
+    override val prefQualityValues = listOf("1080p", "720p", "480p", "360p", "240p")
 
     // ============================ Video Links =============================
 
     private val byseExtractor by lazy { ByseExtractor(client, headers, baseUrl) }
     private val filemoonExtractor by lazy { FilemoonExtractor(client) }
     private val strmupExtractor by lazy { StrmupExtractor(client, headers) }
-    override fun getVideoList(url: String, name: String): List<Video> {
+    override suspend fun getVideoList(url: String, name: String): List<Video> {
         Log.d(tag, "Fetching videos from: $url")
 
         return when {

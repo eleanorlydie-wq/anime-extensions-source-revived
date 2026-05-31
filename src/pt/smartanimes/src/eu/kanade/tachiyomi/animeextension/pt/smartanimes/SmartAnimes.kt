@@ -5,7 +5,7 @@ import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.multisrc.animestream.AnimeStream
 import eu.kanade.tachiyomi.util.asJsoup
-import eu.kanade.tachiyomi.util.parallelCatchingFlatMapBlocking
+import keiyoushi.utils.parallelCatchingFlatMapBlocking
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Response
 
@@ -20,8 +20,7 @@ class SmartAnimes : AnimeStream(
         add("Accept-Language", "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7")
     }
 
-    override val prefQualityValues = arrayOf("1080p", "720p", "480p", "360p", "240p")
-    override val prefQualityEntries = prefQualityValues
+    override val prefQualityValues = listOf("1080p", "720p", "480p", "360p", "240p")
 
     // ============================ Video Links =============================
     override fun videoListSelector() = ".dlbox li:not(.head)"
@@ -39,7 +38,7 @@ class SmartAnimes : AnimeStream(
 
     private val smartanimesExtractor by lazy { SmartAnimesExtractor(client, headers) }
 
-    override fun getVideoList(url: String, name: String): List<Video> {
+    override suspend fun getVideoList(url: String, name: String): List<Video> {
         val host = baseUrl.toHttpUrl().host
         return when {
             host in url -> smartanimesExtractor.videosFromUrl(url, name)

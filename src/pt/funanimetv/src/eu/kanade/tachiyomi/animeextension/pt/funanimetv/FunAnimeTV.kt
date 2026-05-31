@@ -18,7 +18,7 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.network.interceptor.rateLimit
-import eu.kanade.tachiyomi.util.parseAs
+import keiyoushi.utils.parseAs
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject

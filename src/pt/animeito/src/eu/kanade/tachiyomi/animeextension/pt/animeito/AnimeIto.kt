@@ -13,8 +13,7 @@ class AnimeIto : AnimeStream(
     override fun headersBuilder() = super.headersBuilder().add("Referer", baseUrl)
 
     // ============================ Video Links =============================
-    override val prefQualityValues = arrayOf("1080p", "720p", "480p", "360p", "240p")
-    override val prefQualityEntries = prefQualityValues
+    override val prefQualityValues = listOf("1080p", "720p", "480p", "360p", "240p")
 
     // ============================ Video Links =============================
 
