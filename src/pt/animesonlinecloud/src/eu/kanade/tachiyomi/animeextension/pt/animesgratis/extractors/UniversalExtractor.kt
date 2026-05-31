@@ -96,13 +96,13 @@ class UniversalExtractor(private val client: OkHttpClient) {
         }
     }
 
-    private fun String.proper(): String {
-        return this.replaceFirstChar {
-            if (it.isLowerCase()) {
-                it.titlecase(
-                    Locale.getDefault(),
-                )
-            } else it.toString()
+    private fun String.proper(): String = this.replaceFirstChar {
+        if (it.isLowerCase()) {
+            it.titlecase(
+                Locale.getDefault(),
+            )
+        } else {
+            it.toString()
         }
     }
 

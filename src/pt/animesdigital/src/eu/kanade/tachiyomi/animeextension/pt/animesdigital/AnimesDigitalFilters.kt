@@ -16,9 +16,7 @@ class AnimesDigitalFilters(
 
     private lateinit var filterList: AnimeFilterList
 
-    fun filterInitialized(): Boolean {
-        return this::filterList.isInitialized
-    }
+    fun filterInitialized(): Boolean = this::filterList.isInitialized
 
     open class QueryPartFilter(
         displayName: String,
@@ -52,21 +50,20 @@ class AnimesDigitalFilters(
     class AudioFilter : QueryPartFilter("Língua/Áudio", AnimesDigitalFiltersData.AUDIOS)
     class TypeFilter : QueryPartFilter("Tipo", AnimesDigitalFiltersData.TYPES)
 
-    class GenresFilter(genres: Array<Pair<String, String>>) : TriStateFilterList(
-        "Gêneros",
-        genres.map { TriFilterVal(it.first) },
-    ) {
+    class GenresFilter(genres: Array<Pair<String, String>>) :
+        TriStateFilterList(
+            "Gêneros",
+            genres.map { TriFilterVal(it.first) },
+        ) {
         val genresArray = genres
     }
 
-    fun getFilterList(): AnimeFilterList {
-        return if (error) {
-            AnimeFilterList(AnimeFilter.Header("Erro ao buscar os filtros."))
-        } else if (filterInitialized()) {
-            filterList
-        } else {
-            AnimeFilterList(AnimeFilter.Header("Aperte 'Redefinir' para tentar mostrar os filtros"))
-        }
+    fun getFilterList(): AnimeFilterList = if (error) {
+        AnimeFilterList(AnimeFilter.Header("Erro ao buscar os filtros."))
+    } else if (filterInitialized()) {
+        filterList
+    } else {
+        AnimeFilterList(AnimeFilter.Header("Aperte 'Redefinir' para tentar mostrar os filtros"))
     }
 
     fun fetchFilters() {

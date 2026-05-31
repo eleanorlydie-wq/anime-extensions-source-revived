@@ -15,11 +15,12 @@ import uy.kohesive.injekt.injectLazy
 import java.text.SimpleDateFormat
 import java.util.Locale
 
-class BetterAnimeIo : DooPlay(
-    "pt-BR",
-    "BetterAnimeIo",
-    "https://betteranime.io",
-) {
+class BetterAnimeIo :
+    DooPlay(
+        "pt-BR",
+        "BetterAnimeIo",
+        "https://betteranime.io",
+    ) {
     private val contentUrl = "$baseUrl/animes"
 
     private val json: Json by injectLazy()
@@ -34,8 +35,7 @@ class BetterAnimeIo : DooPlay(
     // =============================== Latest ===============================
     override fun latestUpdatesSelector() = "div#archive-content article.item div.poster"
 
-    override fun latestUpdatesRequest(page: Int): Request =
-        GET("$contentUrl/page/$page", headers)
+    override fun latestUpdatesRequest(page: Int): Request = GET("$contentUrl/page/$page", headers)
 
     // ============================== Episodes ==============================
     override fun getSeasonEpisodes(season: Element): List<SEpisode> {
@@ -47,29 +47,25 @@ class BetterAnimeIo : DooPlay(
         }
     }
 
-    override fun episodeFromElement(element: Element, seasonName: String): SEpisode {
-        return SEpisode.create().apply {
-            val link = element.selectFirst(".episodiotitle a")!!
-            val episodeText = link.text()
-            val epNum = episodeText.substringBefore(" -").trim()
+    override fun episodeFromElement(element: Element, seasonName: String): SEpisode = SEpisode.create().apply {
+        val link = element.selectFirst(".episodiotitle a")!!
+        val episodeText = link.text()
+        val epNum = episodeText.substringBefore(" -").trim()
 
-            episode_number = epNum.toFloatOrNull() ?: 0F
-            name = "$episodeSeasonPrefix $seasonName x $epNum"
-            setUrlWithoutDomain(link.attr("href"))
+        episode_number = epNum.toFloatOrNull() ?: 0F
+        name = "$episodeSeasonPrefix $seasonName x $epNum"
+        setUrlWithoutDomain(link.attr("href"))
 
-            element.selectFirst(".timeAgo[data-time]")?.attr("data-time")?.let { dateStr ->
-                date_upload = parseIsoDate(dateStr)
-            }
+        element.selectFirst(".timeAgo[data-time]")?.attr("data-time")?.let { dateStr ->
+            date_upload = parseIsoDate(dateStr)
         }
     }
 
-    private fun parseIsoDate(dateStr: String): Long {
-        return try {
-            SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.getDefault())
-                .parse(dateStr)?.time ?: 0L
-        } catch (e: Exception) {
-            0L
-        }
+    private fun parseIsoDate(dateStr: String): Long = try {
+        SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.getDefault())
+            .parse(dateStr)?.time ?: 0L
+    } catch (e: Exception) {
+        0L
     }
 
     // ============================== Filters ===============================

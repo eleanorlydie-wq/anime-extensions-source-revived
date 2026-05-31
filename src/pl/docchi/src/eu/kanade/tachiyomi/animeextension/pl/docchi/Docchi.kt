@@ -253,20 +253,16 @@ class Docchi :
         ).execute()
         return document.body.string().parseAs<MyAnimeListResponse>()
     }
-    private fun parseDate(date: String): Long {
-        return try {
-            val formatter = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.getDefault())
-            formatter.parse(date)?.time ?: 0L
-        } catch (e: Exception) {
-            0L
-        }
+    private fun parseDate(date: String): Long = try {
+        val formatter = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.getDefault())
+        formatter.parse(date)?.time ?: 0L
+    } catch (e: Exception) {
+        0L
     }
-    private fun parseStatus(statusString: String): Int {
-        return when {
-            statusString.lowercase().contains("currently airing") -> SAnime.ONGOING
-            statusString.lowercase().contains("finished airing") -> SAnime.COMPLETED
-            else -> SAnime.UNKNOWN
-        }
+    private fun parseStatus(statusString: String): Int = when {
+        statusString.lowercase().contains("currently airing") -> SAnime.ONGOING
+        statusString.lowercase().contains("finished airing") -> SAnime.COMPLETED
+        else -> SAnime.UNKNOWN
     }
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {

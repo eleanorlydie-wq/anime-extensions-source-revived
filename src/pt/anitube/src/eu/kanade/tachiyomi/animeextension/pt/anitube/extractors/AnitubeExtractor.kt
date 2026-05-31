@@ -31,29 +31,23 @@ class AnitubeExtractor(
         val quality: String,
     )
 
-    private fun buildApiHeaders(referer: String): Headers {
-        return headers.newBuilder()
-            .set("Referer", "https://${referer.toHttpUrl().host}/")
-            .add("Accept", "*/*")
-            .add("Cache-Control", "no-cache")
-            .add("Pragma", "no-cache")
-            .add("Connection", "keep-alive")
-            .add("Sec-Fetch-Dest", "empty")
-            .add("Sec-Fetch-Mode", "cors")
-            .add("Sec-Fetch-Site", "same-site")
-            .build()
-    }
+    private fun buildApiHeaders(referer: String): Headers = headers.newBuilder()
+        .set("Referer", "https://${referer.toHttpUrl().host}/")
+        .add("Accept", "*/*")
+        .add("Cache-Control", "no-cache")
+        .add("Pragma", "no-cache")
+        .add("Connection", "keep-alive")
+        .add("Sec-Fetch-Dest", "empty")
+        .add("Sec-Fetch-Mode", "cors")
+        .add("Sec-Fetch-Site", "same-site")
+        .build()
 
-    private fun extractPublicidadeCode(response: String): String {
-        return response
-            .substringAfter("\"publicidade\"", "")
-            .substringAfter('"')
-            .substringBefore('"')
-    }
+    private fun extractPublicidadeCode(response: String): String = response
+        .substringAfter("\"publicidade\"", "")
+        .substringAfter('"')
+        .substringBefore('"')
 
-    private fun normalizeLink(link: String): String {
-        return if (link.startsWith("//")) "https:$link" else link
-    }
+    private fun normalizeLink(link: String): String = if (link.startsWith("//")) "https:$link" else link
 
     private fun fetchPlayerInfo(
         link: String,

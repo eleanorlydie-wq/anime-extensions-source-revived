@@ -145,9 +145,8 @@ class LaMovieEmbedExtractor(
         return builder.reverse().toString()
     }
 
-    private fun String.unescapePackerString(): String =
-        replace("\\\\", "\\")
-            .replace("\\'", "'")
+    private fun String.unescapePackerString(): String = replace("\\\\", "\\")
+        .replace("\\'", "'")
 
     companion object {
         private const val DEFAULT_ORIGIN = "https://lamovie.link"

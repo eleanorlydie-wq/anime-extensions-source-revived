@@ -43,8 +43,7 @@ class SamatoDenVideos : AnimeHttpSource() {
 
     override fun latestUpdatesParse(response: Response): AnimesPage = parseFeedPage(response.body.string())
 
-    override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request =
-        GET(feedUrl(page, query = query.trim()), headers)
+    override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request = GET(feedUrl(page, query = query.trim()), headers)
 
     override fun searchAnimeParse(response: Response): AnimesPage = parseFeedPage(response.body.string())
 
@@ -198,23 +197,22 @@ class SamatoDenVideos : AnimeHttpSource() {
 
     private fun extractPrimaryCredit(html: String): String? = extractCreditLines(html).firstOrNull()
 
-    private fun extractCreditLines(html: String): List<String> =
-        buildList {
-            EDITED_BY_CAPTURE_REGEX.findAll(html)
-                .map { cleanHtml(it.groupValues[1]) }
-                .filter { it.isNotBlank() }
-                .forEach(::add)
+    private fun extractCreditLines(html: String): List<String> = buildList {
+        EDITED_BY_CAPTURE_REGEX.findAll(html)
+            .map { cleanHtml(it.groupValues[1]) }
+            .filter { it.isNotBlank() }
+            .forEach(::add)
 
-            STRONG_ARTIST_REGEX.findAll(html)
-                .map { cleanHtml(it.groupValues[1]) }
-                .filter { it.isNotBlank() }
-                .forEach(::add)
+        STRONG_ARTIST_REGEX.findAll(html)
+            .map { cleanHtml(it.groupValues[1]) }
+            .filter { it.isNotBlank() }
+            .forEach(::add)
 
-            HEADING_ARTISTS_SECTION_REGEX.findAll(html)
-                .map { cleanHtml(it.groupValues[1]) }
-                .filter { it.isNotBlank() }
-                .forEach(::add)
-        }.distinct()
+        HEADING_ARTISTS_SECTION_REGEX.findAll(html)
+            .map { cleanHtml(it.groupValues[1]) }
+            .filter { it.isNotBlank() }
+            .forEach(::add)
+    }.distinct()
 
     private fun extractThumbnail(entry: JSONObject, html: String): String? {
         val inlineImage = HIDDEN_IMAGE_REGEX.find(html)?.groupValues?.getOrNull(1)
@@ -251,20 +249,16 @@ class SamatoDenVideos : AnimeHttpSource() {
         return null
     }
 
-    private fun normalizePostFeedUrl(url: String): String =
-        if (url.contains("alt=json")) url else "$url${if (url.contains("?")) "&" else "?"}alt=json"
+    private fun normalizePostFeedUrl(url: String): String = if (url.contains("alt=json")) url else "$url${if (url.contains("?")) "&" else "?"}alt=json"
 
-    private fun parseDateMillis(value: String?): Long =
-        value?.takeIf { it.isNotBlank() }?.let { OffsetDateTime.parse(it).toInstant().toEpochMilli() } ?: 0L
+    private fun parseDateMillis(value: String?): Long = value?.takeIf { it.isNotBlank() }?.let { OffsetDateTime.parse(it).toInstant().toEpochMilli() } ?: 0L
 
-    private fun cleanHtml(value: String): String =
-        Html.fromHtml(value, Html.FROM_HTML_MODE_LEGACY).toString().trim()
+    private fun cleanHtml(value: String): String = Html.fromHtml(value, Html.FROM_HTML_MODE_LEGACY).toString().trim()
 
-    private fun cleanCredit(value: String): String =
-        value
-            .replace(EDITED_BY_REGEX, "")
-            .replace(ARTIST_BY_REGEX, "")
-            .trim()
+    private fun cleanCredit(value: String): String = value
+        .replace(EDITED_BY_REGEX, "")
+        .replace(ARTIST_BY_REGEX, "")
+        .trim()
 
     private fun String.urlEncode(): String = URLEncoder.encode(this, Charsets.UTF_8.name())
 

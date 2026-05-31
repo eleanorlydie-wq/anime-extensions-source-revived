@@ -71,7 +71,6 @@ class FilemoonExtractor(private val client: OkHttpClient, private val preference
                 set("Sec-Fetch-Site", "same-origin")
                 set("Sec-Fetch-Storage-Access", "active")
                 set("User-Agent", userAgent)
-
             }.build()
 
             val apiUrl = "https://$embedHost/api/videos/$mediaId/embed/playback"
@@ -109,7 +108,6 @@ class FilemoonExtractor(private val client: OkHttpClient, private val preference
                     videoNameGen = { "$prefix${it.replace("Video", quality)}p" },
                 )
             }
-
         } catch (e: Exception) {
             Log.e("FilemoonExtractor", "Failed to extract video from $url", e)
             emptyList()
@@ -190,8 +188,10 @@ fun String.encodeUrlPath(): String {
         .joinToString("/") { segment ->
             if (segment.isEmpty()) {
                 ""
-            } else URLEncoder.encode(segment, StandardCharsets.UTF_8.toString())
-                .replace("+", "%20")
+            } else {
+                URLEncoder.encode(segment, StandardCharsets.UTF_8.toString())
+                    .replace("+", "%20")
+            }
         }
 
     return URI(

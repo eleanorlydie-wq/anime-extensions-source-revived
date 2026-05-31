@@ -50,7 +50,10 @@ open class MhdFlix :
 
     override val supportsLatest = true
 
-    private val json = Json { ignoreUnknownKeys = true; coerceInputValues = true }
+    private val json = Json {
+        ignoreUnknownKeys = true
+        coerceInputValues = true
+    }
 
     private val jsonMediaType = "application/json".toMediaType()
 
@@ -100,8 +103,7 @@ open class MhdFlix :
         .add("Referer", "$baseUrl/")
         .add("Accept", "application/json, text/plain, */*")
 
-    override fun popularAnimeRequest(page: Int): Request =
-        apiGet("$apiUrl/api/seo/medias", page)
+    override fun popularAnimeRequest(page: Int): Request = apiGet("$apiUrl/api/seo/medias", page)
 
     override fun popularAnimeParse(response: Response): AnimesPage {
         val requestedPage = response.request.page
@@ -139,8 +141,7 @@ open class MhdFlix :
         return AnimesPage(animeList, hasNext)
     }
 
-    override fun latestUpdatesRequest(page: Int): Request =
-        apiGet("$apiUrl/api/serie/episode/last?page=$page", page)
+    override fun latestUpdatesRequest(page: Int): Request = apiGet("$apiUrl/api/serie/episode/last?page=$page", page)
 
     override fun latestUpdatesParse(response: Response): AnimesPage {
         val requestedPage = response.request.page
@@ -575,12 +576,10 @@ open class MhdFlix :
         }
     }
 
-    private fun String?.toEpoch(): Long {
-        return try {
-            if (this.isNullOrBlank()) 0L else dateFormatter.parse(this)?.time ?: 0L
-        } catch (_: Exception) {
-            0L
-        }
+    private fun String?.toEpoch(): Long = try {
+        if (this.isNullOrBlank()) 0L else dateFormatter.parse(this)?.time ?: 0L
+    } catch (_: Exception) {
+        0L
     }
 
     private fun MediaDto.resolveTitle(forEpisode: Boolean = false): String {

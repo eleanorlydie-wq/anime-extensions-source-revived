@@ -85,25 +85,23 @@ class AsiaLiveAction :
 
     override fun popularAnimeNextPageSelector(): String = ".paginado a:has(i.fa-angle-right)"
 
-    override fun animeDetailsParse(document: Document): SAnime {
-        return SAnime.create().apply {
-            thumbnail_url = document.selectFirst("div.Poster")?.attr("style")?.extractBackgroundUrl()
-                ?: document.selectFirst("figure img")?.attr("abs:src")?.getHdImg()
-            title = document.selectFirst("h2.Title, h1.Title")?.text()?.trim().orEmpty()
-            val descriptionText = document.select("section article > p")
-                .joinToString("\n\n") { it.text().trim() }
-            description = descriptionText.takeIf { it.isNotBlank() }
-            val genreText = document.select("footer a.tag").joinToString { it.text() }
-            genre = genreText.takeIf { it.isNotBlank() }
-            val artistText = document.select("#elenco .actor-nm").joinToString { it.text() }
-            artist = artistText.takeIf { it.isNotBlank() }
-            val statusText = document.selectFirst(".categorias .estado")?.text()?.lowercase()
-            status = when {
-                statusText?.contains("finalizado") == true -> SAnime.COMPLETED
-                statusText?.contains("publicacion") == true -> SAnime.ONGOING
-                statusText?.contains("publicación") == true -> SAnime.ONGOING
-                else -> SAnime.UNKNOWN
-            }
+    override fun animeDetailsParse(document: Document): SAnime = SAnime.create().apply {
+        thumbnail_url = document.selectFirst("div.Poster")?.attr("style")?.extractBackgroundUrl()
+            ?: document.selectFirst("figure img")?.attr("abs:src")?.getHdImg()
+        title = document.selectFirst("h2.Title, h1.Title")?.text()?.trim().orEmpty()
+        val descriptionText = document.select("section article > p")
+            .joinToString("\n\n") { it.text().trim() }
+        description = descriptionText.takeIf { it.isNotBlank() }
+        val genreText = document.select("footer a.tag").joinToString { it.text() }
+        genre = genreText.takeIf { it.isNotBlank() }
+        val artistText = document.select("#elenco .actor-nm").joinToString { it.text() }
+        artist = artistText.takeIf { it.isNotBlank() }
+        val statusText = document.selectFirst(".categorias .estado")?.text()?.lowercase()
+        status = when {
+            statusText?.contains("finalizado") == true -> SAnime.COMPLETED
+            statusText?.contains("publicacion") == true -> SAnime.ONGOING
+            statusText?.contains("publicación") == true -> SAnime.ONGOING
+            else -> SAnime.UNKNOWN
         }
     }
 
@@ -328,13 +326,11 @@ class AsiaLiveAction :
         return match.groupValues[2].toAbsoluteUrl()
     }
 
-    private fun String.toAbsoluteUrl(): String {
-        return when {
-            startsWith("http://") || startsWith("https://") -> this
-            startsWith("//") -> "https:$this"
-            startsWith("/") -> "$baseUrl$this"
-            else -> "$baseUrl/$this"
-        }
+    private fun String.toAbsoluteUrl(): String = when {
+        startsWith("http://") || startsWith("https://") -> this
+        startsWith("//") -> "https:$this"
+        startsWith("/") -> "$baseUrl$this"
+        else -> "$baseUrl/$this"
     }
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {

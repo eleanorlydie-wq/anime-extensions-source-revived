@@ -289,12 +289,10 @@ class SoloLatino :
             return substring(start + 1, end).trim()
         }
 
-        fun String.trimMatchingQuotes(): String {
-            return if ((startsWith('"') && endsWith('"')) || (startsWith('\'') && endsWith('\''))) {
-                substring(1, length - 1)
-            } else {
-                this
-            }
+        fun String.trimMatchingQuotes(): String = if ((startsWith('"') && endsWith('"')) || (startsWith('\'') && endsWith('\''))) {
+            substring(1, length - 1)
+        } else {
+            this
         }
 
         while (true) {

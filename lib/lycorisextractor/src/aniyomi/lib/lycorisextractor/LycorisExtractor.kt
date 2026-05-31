@@ -16,11 +16,14 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 
 class LycorisExtractor(private val client: OkHttpClient) {
-    private val GETLNKURL = "https://www.lycoris.cafe/api/watch/getVideoLink"
 
-    private val DECRYPTURL = "https://www.lycoris.cafe/api/watch/decryptVideoLink"
+    companion object {
+        private const val GETLNKURL = "https://www.lycoris.cafe/api/watch/getVideoLink"
 
-    private val DECRYPT_API_KEY = "303a897d-sd12-41a8-84d1-5e4f5e208878"
+        private const val DECRYPTURL = "https://www.lycoris.cafe/api/watch/decryptVideoLink"
+
+        private const val DECRYPT_API_KEY = "303a897d-sd12-41a8-84d1-5e4f5e208878"
+    }
 
     // Credit: https://github.com/skoruppa/docchi-stremio-addon/blob/main/app/players/lycoris.py
     fun getVideosFromUrl(url: String, headers: Headers, prefix: String): List<Video> {
@@ -39,7 +42,6 @@ class LycorisExtractor(private val client: OkHttpClient) {
 
         val linkList = fetchAndDecodeVideo(client, headers, data.episodeInfo.id.toString())
 
-
         linkList.FHD?.takeIf { checkLinks(client, it) }?.let {
             videos.add(Video(it, "${prefix}lycoris.cafe - 1080p", it))
         }
@@ -52,9 +54,7 @@ class LycorisExtractor(private val client: OkHttpClient) {
         return videos
     }
 
-
     private fun fetchAndDecodeVideo(client: OkHttpClient, headers: Headers, episodeId: String): VideoLinksApi {
-
         val decryptHeaders = headers.newBuilder()
             .add("x-api-key", DECRYPT_API_KEY)
             .add("Content-Type", "application/json")
@@ -74,12 +74,9 @@ class LycorisExtractor(private val client: OkHttpClient) {
         val jsonObject = JSONObject()
         jsonObject.put("encoded", base64Data)
 
-        client.newCall(POST(
-            DECRYPTURL, headers = decryptHeaders, body = jsonObject.toString().toRequestBody("application/json".toMediaType()) )
-        ).execute().use { response ->
+        client.newCall(POST(DECRYPTURL, headers = decryptHeaders, body = jsonObject.toString().toRequestBody("application/json".toMediaType()))).execute().use { response ->
             return response.body.string().parseAs<VideoLinksApi>()
         }
-
     }
 
     private fun checkLinks(client: OkHttpClient, link: String): Boolean {

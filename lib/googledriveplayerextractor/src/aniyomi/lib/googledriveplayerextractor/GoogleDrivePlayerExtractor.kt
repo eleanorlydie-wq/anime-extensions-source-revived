@@ -174,25 +174,23 @@ class GoogleDrivePlayerExtractor(private val client: OkHttpClient, private val h
      * @param height The video height in pixels (used as fallback)
      * @return Quality label string (e.g., "360p", "720p", "1080p")
      */
-    private fun getQualityFromItag(itag: Int, height: Int): String {
-        return when (itag) {
-            18, 43, 82, 134 -> "360p"
-            22, 45, 84, 136 -> "720p"
-            37, 46, 85, 137 -> "1080p"
-            59, 44, 135 -> "480p"
-            83, 133 -> "240p"
-            298 -> "720p"
-            299 -> "1080p"
-            else -> {
-                // Try to infer from height if itag is not recognized
-                when {
-                    height >= 1080 -> "1080p"
-                    height >= 720 -> "720p"
-                    height >= 480 -> "480p"
-                    height >= 360 -> "360p"
-                    height >= 240 -> "240p"
-                    else -> "Unknown"
-                }
+    private fun getQualityFromItag(itag: Int, height: Int): String = when (itag) {
+        18, 43, 82, 134 -> "360p"
+        22, 45, 84, 136 -> "720p"
+        37, 46, 85, 137 -> "1080p"
+        59, 44, 135 -> "480p"
+        83, 133 -> "240p"
+        298 -> "720p"
+        299 -> "1080p"
+        else -> {
+            // Try to infer from height if itag is not recognized
+            when {
+                height >= 1080 -> "1080p"
+                height >= 720 -> "720p"
+                height >= 480 -> "480p"
+                height >= 360 -> "360p"
+                height >= 240 -> "240p"
+                else -> "Unknown"
             }
         }
     }

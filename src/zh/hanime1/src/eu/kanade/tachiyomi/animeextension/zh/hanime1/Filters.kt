@@ -36,7 +36,8 @@ open class TimeFilter(
     private val orderIndex: Int = 0,
     private val hyphen: String = "+",
     private val suffix: String = "",
-) : AnimeFilter.Select<String>(name, values), Comparable<TimeFilter> {
+) : AnimeFilter.Select<String>(name, values),
+    Comparable<TimeFilter> {
     val selected: String
         get() = if (state == 0) {
             ""
@@ -44,9 +45,7 @@ open class TimeFilter(
             "${values[state].replace(unit, "").trim()}$hyphen$unit$suffix"
         }
 
-    override fun compareTo(other: TimeFilter): Int {
-        return orderIndex - other.orderIndex
-    }
+    override fun compareTo(other: TimeFilter): Int = orderIndex - other.orderIndex
 }
 
 class YearFilter(values: Array<String>) :
@@ -58,11 +57,9 @@ class YearFilter(values: Array<String>) :
         suffix = "+",
     )
 
-class MonthFilter(values: Array<String>) :
-    TimeFilter("發佈月份", "月", values.ifEmpty { arrayOf("全部月份") }, orderIndex = 1)
+class MonthFilter(values: Array<String>) : TimeFilter("發佈月份", "月", values.ifEmpty { arrayOf("全部月份") }, orderIndex = 1)
 
-class DateFilter(yearFilter: YearFilter, monthFilter: MonthFilter) :
-    AnimeFilter.Group<TimeFilter>("發佈日期", listOf(yearFilter, monthFilter))
+class DateFilter(yearFilter: YearFilter, monthFilter: MonthFilter) : AnimeFilter.Group<TimeFilter>("發佈日期", listOf(yearFilter, monthFilter))
 
 class CategoryFilter(name: String, filters: List<TagFilter>) : AnimeFilter.Group<TagFilter>(name, filters)
 
