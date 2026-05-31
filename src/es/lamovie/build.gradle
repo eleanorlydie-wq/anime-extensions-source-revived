@@ -6,12 +6,13 @@ ext {
     overrideVersionCode = 1
 }
 
-apply from: "$rootDir/common.gradle"
+apply plugin: "kei.plugins.extension.legacy"
 
 dependencies {
     implementation(project(":lib:playlistutils"))
+    implementation(project(':lib:doodextractor'))
     implementation(project(':lib:streamwishextractor'))
-    implementation(project(':lib:streamhidevidextractor'))
+    implementation(project(':lib:vidhideextractor'))
     implementation(project(':lib:voeextractor'))
     implementation(project(':lib:pixeldrainextractor'))
     implementation(project(':lib:mp4uploadextractor'))

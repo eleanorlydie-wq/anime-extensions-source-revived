@@ -26,7 +26,7 @@ dependencies {
 ### Basic Usage
 
 ```kotlin
-import eu.kanade.tachiyomi.lib.googledriveplayerextractor.GoogleDrivePlayerExtractor
+import aniyomi.lib.googledriveplayerextractor.GoogleDrivePlayerExtractor
 
 // Initialize the extractor
 val extractor = GoogleDrivePlayerExtractor(client, headers)
