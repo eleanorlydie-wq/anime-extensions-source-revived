@@ -10,6 +10,7 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
+import keiyoushi.utils.bodyString
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Request
@@ -28,7 +29,7 @@ class SamatoDenVideos : AnimeHttpSource() {
     override val name = "Samato's Den: Videos"
     override val baseUrl = "https://samatoden.blogspot.com"
     override val lang = "es"
-    override val supportsLatest = true
+    override val supportsLatest = false
     override val versionId = 1
 
     override fun headersBuilder(): Headers.Builder = super.headersBuilder()
@@ -37,23 +38,23 @@ class SamatoDenVideos : AnimeHttpSource() {
 
     override fun popularAnimeRequest(page: Int): Request = GET(feedUrl(page), headers)
 
-    override fun popularAnimeParse(response: Response): AnimesPage = parseFeedPage(response.body.string())
+    override fun popularAnimeParse(response: Response): AnimesPage = parseFeedPage(response.bodyString())
 
-    override fun latestUpdatesRequest(page: Int): Request = GET(feedUrl(page), headers)
+    override fun latestUpdatesRequest(page: Int) = throw UnsupportedOperationException()
 
-    override fun latestUpdatesParse(response: Response): AnimesPage = parseFeedPage(response.body.string())
+    override fun latestUpdatesParse(response: Response) = throw UnsupportedOperationException()
 
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request = GET(feedUrl(page, query = query.trim()), headers)
 
-    override fun searchAnimeParse(response: Response): AnimesPage = parseFeedPage(response.body.string())
+    override fun searchAnimeParse(response: Response): AnimesPage = parseFeedPage(response.bodyString())
 
     override fun animeDetailsRequest(anime: SAnime): Request = GET(normalizePostFeedUrl(anime.url), headers)
 
-    override fun animeDetailsParse(response: Response): SAnime = entryToAnime(parseSingleEntry(response.body.string()))
+    override fun animeDetailsParse(response: Response): SAnime = entryToAnime(parseSingleEntry(response.bodyString()))
 
     override fun episodeListRequest(anime: SAnime): Request = GET(normalizePostFeedUrl(anime.url), headers)
 
-    override fun episodeListParse(response: Response): List<SEpisode> = entryToEpisodes(parseSingleEntry(response.body.string()))
+    override fun episodeListParse(response: Response): List<SEpisode> = entryToEpisodes(parseSingleEntry(response.bodyString()))
 
     override fun getFilterList(): AnimeFilterList = AnimeFilterList()
 
@@ -98,9 +99,9 @@ class SamatoDenVideos : AnimeHttpSource() {
             }
         }
 
-        val total = feed.optJSONObject("openSearch\$totalResults")?.optString("\$t")?.toIntOrNull() ?: animeList.size
-        val start = feed.optJSONObject("openSearch\$startIndex")?.optString("\$t")?.toIntOrNull() ?: 1
-        val perPage = feed.optJSONObject("openSearch\$itemsPerPage")?.optString("\$t")?.toIntOrNull() ?: animeList.size
+        val total = feed.optJSONObject($$"openSearch$totalResults")?.optString($$"$t")?.toIntOrNull() ?: animeList.size
+        val start = feed.optJSONObject($$"openSearch$startIndex")?.optString($$"$t")?.toIntOrNull() ?: 1
+        val perPage = feed.optJSONObject($$"openSearch$itemsPerPage")?.optString($$"$t")?.toIntOrNull() ?: animeList.size
         val hasNextPage = (start + perPage - 1) < total
 
         return AnimesPage(animeList, hasNextPage)
@@ -120,10 +121,10 @@ class SamatoDenVideos : AnimeHttpSource() {
     }
 
     private fun entryToAnime(entry: JSONObject): SAnime {
-        val html = entry.optJSONObject("content")?.optString("\$t").orEmpty()
+        val html = entry.optJSONObject("content")?.optString($$"$t").orEmpty()
         val anime = SAnime.create()
-        anime.url = normalizePostFeedUrl(linkHref(entry, "self").orEmpty())
-        anime.title = entry.optJSONObject("title")?.optString("\$t").orEmpty()
+        anime.url = normalizePostFeedUrl(linkHref(entry, "self")!!)
+        anime.title = entry.optJSONObject("title")?.optString($$"$t")!!
         anime.artist = extractPrimaryCredit(html)
         anime.author = extractPrimaryCredit(html)
         anime.description = extractPrimaryCredit(html)
@@ -135,9 +136,9 @@ class SamatoDenVideos : AnimeHttpSource() {
     }
 
     private fun entryToEpisodes(entry: JSONObject): List<SEpisode> {
-        val animeTitle = entry.optJSONObject("title")?.optString("\$t").orEmpty()
-        val html = entry.optJSONObject("content")?.optString("\$t").orEmpty()
-        val uploadedAt = parseDateMillis(entry.optJSONObject("published")?.optString("\$t"))
+        val animeTitle = entry.optJSONObject("title")?.optString($$"$t").orEmpty()
+        val html = entry.optJSONObject("content")?.optString($$"$t").orEmpty()
+        val uploadedAt = parseDateMillis(entry.optJSONObject("published")?.optString($$"$t"))
         val defaultImage = extractThumbnail(entry, html)
         val referer = linkHref(entry, "alternate") ?: "$baseUrl/"
 
@@ -225,7 +226,7 @@ class SamatoDenVideos : AnimeHttpSource() {
             return playlistImage
         }
 
-        val mediaThumb = entry.optJSONObject("media\$thumbnail")?.optString("url")
+        val mediaThumb = entry.optJSONObject($$"media$thumbnail")?.optString("url")
         return mediaThumb?.substringBefore("=s72")
     }
 
@@ -418,7 +419,7 @@ class SamatoDenVideos : AnimeHttpSource() {
 
         private val HIDDEN_IMAGE_REGEX = Regex("""<img[^>]+src="([^"]+)"""", setOf(RegexOption.IGNORE_CASE))
         private val EDITED_BY_REGEX = Regex("""^\s*edited\s+by\s*:?\s*""", setOf(RegexOption.IGNORE_CASE))
-        private val ARTIST_BY_REGEX = Regex("""^\s*artist(?:s)?\s*:?\s*""", setOf(RegexOption.IGNORE_CASE))
+        private val ARTIST_BY_REGEX = Regex("""^\s*artists?\s*:?\s*""", setOf(RegexOption.IGNORE_CASE))
         private val EDITED_BY_CAPTURE_REGEX = Regex("""<li[^>]*>\s*Edited\s+by\s*([^<]+)</li>""", setOf(RegexOption.IGNORE_CASE))
         private val STRONG_ARTIST_REGEX = Regex("""<strong>\s*Artists?:\s*</strong>\s*([^<]+)""", setOf(RegexOption.IGNORE_CASE))
         private val HEADING_ARTISTS_SECTION_REGEX = Regex(

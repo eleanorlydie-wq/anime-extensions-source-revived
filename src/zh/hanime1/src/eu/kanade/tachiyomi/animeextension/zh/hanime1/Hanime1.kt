@@ -13,22 +13,22 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.awaitSuccess
-import eu.kanade.tachiyomi.util.asJsoup
 import keiyoushi.utils.getPreferencesLazy
+import keiyoushi.utils.parseAs
+import keiyoushi.utils.toJsonString
+import keiyoushi.utils.tryParse
+import keiyoushi.utils.useAsJsoup
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
 import okhttp3.Cookie
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Interceptor
 import okhttp3.Request
 import okhttp3.Response
-import uy.kohesive.injekt.injectLazy
 import java.text.SimpleDateFormat
 import java.util.Locale
 
@@ -42,27 +42,26 @@ enum class FilterUpdateState {
 class Hanime1 :
     AnimeHttpSource(),
     ConfigurableAnimeSource {
-    override val baseUrl: String
-        get() = "https://hanime1.me"
-    override val lang: String
-        get() = "zh"
-    override val name: String
-        get() = "Hanime1.me"
+    override val baseUrl = "https://hanime1.me"
+    override val lang = "zh"
+    override val name = "Hanime1.me"
     override val supportsLatest: Boolean
         get() = true
 
-    override val client =
-        network.client.newBuilder().addInterceptor(::checkFiltersInterceptor).build()
+    override val client = network.client.newBuilder()
+        .addInterceptor(::checkFiltersInterceptor)
+        .build()
 
     private val preferences by getPreferencesLazy()
-    private val json by injectLazy<Json>()
+
     private var filterUpdateState = FilterUpdateState.NONE
+
     private val uploadDateFormat: SimpleDateFormat by lazy {
         SimpleDateFormat("yyyy-MM-dd", Locale.ROOT)
     }
 
     override fun animeDetailsParse(response: Response): SAnime {
-        val doc = response.asJsoup()
+        val doc = response.useAsJsoup()
         return SAnime.create().apply {
             genre = doc.select(".single-video-tag").not("[data-toggle]").eachText().joinToString()
             author = doc.select("#video-artist-name").text()
@@ -91,7 +90,7 @@ class Hanime1 :
     }
 
     override fun episodeListParse(response: Response): List<SEpisode> {
-        val jsoup = response.asJsoup()
+        val jsoup = response.useAsJsoup()
         val nodes = jsoup.select("#playlist-scroll").first()!!.select(">div")
         return nodes.mapIndexed { index, element ->
             SEpisode.create().apply {
@@ -104,15 +103,14 @@ class Hanime1 :
                     val timeStr =
                         jsoup.select("div.video-description-panel > div:first-child").text()
                             .split(" ").last()
-                    date_upload =
-                        runCatching { uploadDateFormat.parse(timeStr)?.time }.getOrNull() ?: 0L
+                    date_upload = uploadDateFormat.tryParse(timeStr)
                 }
             }
         }
     }
 
     override fun videoListParse(response: Response): List<Video> {
-        val doc = response.asJsoup()
+        val doc = response.useAsJsoup()
         val sourceList = doc.select("video source")
         val preferQuality = preferences.getString(PREF_KEY_VIDEO_QUALITY, DEFAULT_QUALITY)
         return sourceList.map {
@@ -143,7 +141,7 @@ class Hanime1 :
     }
 
     override fun searchAnimeParse(response: Response): AnimesPage {
-        val jsoup = response.asJsoup()
+        val jsoup = response.useAsJsoup()
         val nodes = jsoup.select(".horizontal-row .video-item-container:not(:has(a.video-link[target]))")
         val list = if (nodes.isNotEmpty()) {
             nodes.map {
@@ -242,7 +240,7 @@ class Hanime1 :
         val exceptionHandler =
             CoroutineExceptionHandler { _, _ -> filterUpdateState = FilterUpdateState.FAILED }
         scope.launch(exceptionHandler) {
-            val jsoup = client.newCall(GET("$baseUrl/search")).awaitSuccess().asJsoup()
+            val jsoup = client.newCall(GET("$baseUrl/search")).awaitSuccess().useAsJsoup()
             val genreList = jsoup.select("div.genre-option div.hentai-sort-options").eachText()
             val sortList =
                 jsoup.select("div.hentai-sort-options-wrapper div.hentai-sort-options").eachText()
@@ -269,7 +267,7 @@ class Hanime1 :
                 .putString(PREF_KEY_SORT_LIST, sortList.joinToString())
                 .putString(PREF_KEY_YEAR_LIST, yearList.joinToString())
                 .putString(PREF_KEY_MONTH_LIST, monthList.joinToString())
-                .putString(PREF_KEY_CATEGORY_LIST, json.encodeToString(categoryDict)).apply()
+                .putString(PREF_KEY_CATEGORY_LIST, categoryDict.toJsonString()).apply()
             filterUpdateState = FilterUpdateState.COMPLETED
         }
     }
@@ -293,7 +291,7 @@ class Hanime1 :
         if (savedCategories.isNullOrEmpty()) {
             return result
         }
-        json.decodeFromString<Map<String, List<String>>>(savedCategories).forEach {
+        savedCategories.parseAs<Map<String, List<String>>>().forEach {
             result.add(CategoryFilter(it.key, it.value.map { value -> TagFilter("tags[]", value) }))
         }
         return result

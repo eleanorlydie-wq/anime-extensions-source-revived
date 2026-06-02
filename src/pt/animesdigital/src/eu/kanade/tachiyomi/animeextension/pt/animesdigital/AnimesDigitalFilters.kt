@@ -4,7 +4,7 @@ import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter.TriState
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.network.GET
-import eu.kanade.tachiyomi.util.asJsoup
+import keiyoushi.utils.useAsJsoup
 import okhttp3.OkHttpClient
 import org.jsoup.nodes.Document
 
@@ -14,6 +14,7 @@ class AnimesDigitalFilters(
 ) {
     private var error = false
 
+    @Volatile
     private lateinit var filterList: AnimeFilterList
 
     fun filterInitialized(): Boolean = this::filterList.isInitialized
@@ -40,8 +41,8 @@ class AnimesDigitalFilters(
         .map { filter -> filter.state to options.find { it.first == filter.name }!!.second }
         .groupBy { it.first } // group by state
         .let { dict ->
-            val included = dict.get(TriState.STATE_INCLUDE)?.map { it.second }.orEmpty()
-            val excluded = dict.get(TriState.STATE_EXCLUDE)?.map { it.second }.orEmpty()
+            val included = dict[TriState.STATE_INCLUDE]?.map { it.second }.orEmpty()
+            val excluded = dict[TriState.STATE_EXCLUDE]?.map { it.second }.orEmpty()
             listOf(included, excluded)
         }
 
@@ -66,13 +67,14 @@ class AnimesDigitalFilters(
         AnimeFilterList(AnimeFilter.Header("Aperte 'Redefinir' para tentar mostrar os filtros"))
     }
 
+    @Synchronized
     fun fetchFilters() {
         if (!filterInitialized()) {
             runCatching {
                 error = false
                 val document = client.newCall(GET("$baseUrl/animes-legendados-online"))
                     .execute()
-                    .asJsoup()
+                    .useAsJsoup()
                 filterList = filtersParse(document)
             }.onFailure {
                 error = true

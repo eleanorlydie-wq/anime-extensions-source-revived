@@ -20,18 +20,14 @@ import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
 import keiyoushi.utils.getPreferencesLazy
 import keiyoushi.utils.parseAs
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
+import keiyoushi.utils.toJsonRequestBody
 import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import okhttp3.Headers
-import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
-import uy.kohesive.injekt.injectLazy
 
 class AnimeOnsen :
     AnimeHttpSource(),
@@ -58,8 +54,6 @@ class AnimeOnsen :
 
     private val preferences by getPreferencesLazy()
 
-    private val json: Json by injectLazy()
-
     override fun headersBuilder() = Headers.Builder().add("user-agent", AO_USER_AGENT)
 
     // ============================== Popular ===============================
@@ -81,11 +75,9 @@ class AnimeOnsen :
 
     // =============================== Search ===============================
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
-        val postBody = json.encodeToString(
-            buildJsonObject {
-                put("q", query)
-            },
-        ).toRequestBody("application/json; charset=utf-8".toMediaType())
+        val postBody = buildJsonObject {
+            put("q", query)
+        }.toJsonRequestBody()
 
         return POST("$searchUrl/indexes/content/search", body = postBody)
     }
@@ -157,13 +149,6 @@ class AnimeOnsen :
             entryValues = PREF_SUB_VALUES
             setDefaultValue(PREF_SUB_DEFAULT)
             summary = "%s"
-
-            setOnPreferenceChangeListener { _, newValue ->
-                val selected = newValue as String
-                val index = findIndexOfValue(selected)
-                val entry = entryValues[index] as String
-                preferences.edit().putString(key, entry).commit()
-            }
         }.also(screen::addPreference)
     }
 

@@ -4,8 +4,11 @@ import aniyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.network.GET
+import eu.kanade.tachiyomi.network.awaitSuccess
 import keiyoushi.lib.jsunpacker.JsUnpacker
-import kotlinx.serialization.json.Json
+import keiyoushi.utils.bodyString
+import keiyoushi.utils.parseAs
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -17,10 +20,9 @@ class LaMovieEmbedExtractor(
     private val client: OkHttpClient,
     private val headers: Headers,
 ) {
-    private val json by lazy { Json { ignoreUnknownKeys = true } }
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
 
-    fun videosFromUrl(url: String, prefix: String): List<Video> {
+    suspend fun videosFromUrl(url: String, prefix: String): List<Video> {
         val parsedUrl = url.toHttpUrlOrNull()
         val origin = parsedUrl?.let { "${it.scheme}://${it.host}" } ?: DEFAULT_ORIGIN
         val referer = "$origin/"
@@ -30,9 +32,7 @@ class LaMovieEmbedExtractor(
             set("Referer", referer)
         }.build()
 
-        val body = client.newCall(GET(url, embedHeaders)).execute().use { response ->
-            response.body.string()
-        }
+        val body = client.newCall(GET(url, embedHeaders)).awaitSuccess().bodyString()
 
         var playlistUrl: String? = null
         val subtitleAccumulator = linkedSetOf<Pair<String, String>>()
@@ -45,7 +45,7 @@ class LaMovieEmbedExtractor(
         }
 
         CONFIG_REGEX.find(body)?.groupValues?.getOrNull(1)?.let { configText ->
-            val configJson = runCatching { json.parseToJsonElement(configText).jsonObject }.getOrNull()
+            val configJson = runCatching { configText.parseAs<JsonElement>().jsonObject }.getOrNull()
             configJson?.get("file")?.jsonPrimitive?.contentOrNull?.takeIf(String::isNotBlank)?.let {
                 playlistUrl = it.unescapeUrl()
             }
@@ -155,7 +155,7 @@ class LaMovieEmbedExtractor(
         private const val PACKER_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
         private val CONFIG_REGEX = Regex(
-            pattern = """<script\s+id['\"]config['\"][^>]*>(\{[\s\S]*?\})</script>""",
+            pattern = """<script\s+id=['"]config['"][^>]*>(\{[\s\S]*?\})</script>""",
             options = setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL),
         )
         private val SCRIPT_REGEX = Regex("""eval\(function\(p,a,c,k,e,d\)[\s\S]*?\.split('\|')\)\)""")
@@ -163,7 +163,7 @@ class LaMovieEmbedExtractor(
             pattern = """eval\(function\(p,a,c,k,e,d\)\{[\s\S]*?\}\('([^']*)',(\\d+),(\\d+),'([^']*)'\.split\('\|'\)\)""",
             options = setOf(RegexOption.DOT_MATCHES_ALL),
         )
-        private val M3U8_REGEX = Regex("""https?://[^\s'\"]+\.m3u8[^\s'\"]*""")
-        private val SUBTITLE_REGEX = Regex("""\[(.+?)](https?://[^\s'\"]+)""")
+        private val M3U8_REGEX = Regex("""https?://[^\s'"]+\.m3u8[^\s'"]*""")
+        private val SUBTITLE_REGEX = Regex("""\[(.+?)](https?://[^\s'"]+)""")
     }
 }

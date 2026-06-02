@@ -9,8 +9,10 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.multisrc.dooplay.DooPlay
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
-import eu.kanade.tachiyomi.util.asJsoup
+import eu.kanade.tachiyomi.network.awaitSuccess
+import keiyoushi.utils.bodyString
 import keiyoushi.utils.parallelCatchingFlatMapBlocking
+import keiyoushi.utils.useAsJsoup
 import okhttp3.FormBody
 import okhttp3.Response
 import org.jsoup.nodes.Document
@@ -88,7 +90,7 @@ class AnimesROLL :
 
     // ============================ Video Links =============================
     override fun videoListParse(response: Response): List<Video> {
-        val document = response.asJsoup()
+        val document = response.useAsJsoup()
         val players = document.select("ul#playeroptionsul li")
         return players.parallelCatchingFlatMapBlocking(::getPlayerVideos)
     }
@@ -99,10 +101,10 @@ class AnimesROLL :
     private val anrollOnlineExtractor by lazy { AnrollOnlineExtractor(client) }
     private val universalExtractor by lazy { UniversalExtractor(client) }
 
-    private fun getPlayerVideos(player: Element): List<Video> {
+    private suspend fun getPlayerVideos(player: Element): List<Video> {
         val fullName = player.selectFirst("span.title")!!.text()
         val realName = fullName.substringAfter("(").substringBefore(")")
-        val url = getPlayerUrl(player) ?: return emptyList()
+        val url = getPlayerUrl(player)
         Log.d(tag, "Fetching videos from: $url")
 
         var videos: List<Video> = when {
@@ -124,7 +126,7 @@ class AnimesROLL :
         return videos
     }
 
-    private fun getPlayerUrl(player: Element): String {
+    private suspend fun getPlayerUrl(player: Element): String {
         val body = FormBody.Builder()
             .add("action", "doo_player_ajax")
             .add("post", player.attr("data-post"))
@@ -133,7 +135,7 @@ class AnimesROLL :
             .build()
 
         return client.newCall(POST("$baseUrl/wp-admin/admin-ajax.php", headers, body))
-            .execute().body.string()
+            .awaitSuccess().bodyString()
             .substringAfter("\"embed_url\":\"")
             .substringBefore("\",")
             .replace("\\", "")
@@ -158,11 +160,6 @@ class AnimesROLL :
     }
 
     // ============================= Utilities ==============================
-    private fun Element.tryGetAttr(vararg attributeKeys: String): String? {
-        val attributeKey = attributeKeys.first { hasAttr(it) }
-        return attr(attributeKey)
-    }
-
     override fun List<Video>.sort(): List<Video> {
         val quality = preferences.getString(videoSortPrefKey, videoSortPrefDefault)!!
         return sortedWith(

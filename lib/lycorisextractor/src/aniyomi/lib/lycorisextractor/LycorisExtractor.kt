@@ -4,15 +4,17 @@ import android.util.Base64
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
-import eu.kanade.tachiyomi.util.asJsoup
+import eu.kanade.tachiyomi.network.await
+import eu.kanade.tachiyomi.network.awaitSuccess
+import keiyoushi.utils.bodyString
 import keiyoushi.utils.parseAs
+import keiyoushi.utils.toJsonRequestBody
+import keiyoushi.utils.useAsJsoup
 import kotlinx.serialization.Serializable
 import okhttp3.Headers
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
-import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
-import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 
 class LycorisExtractor(private val client: OkHttpClient) {
@@ -26,12 +28,12 @@ class LycorisExtractor(private val client: OkHttpClient) {
     }
 
     // Credit: https://github.com/skoruppa/docchi-stremio-addon/blob/main/app/players/lycoris.py
-    fun getVideosFromUrl(url: String, headers: Headers, prefix: String): List<Video> {
+    suspend fun getVideosFromUrl(url: String, headers: Headers, prefix: String): List<Video> {
         val videos = mutableListOf<Video>()
 
         val document = client.newCall(
             GET(url, headers = headers),
-        ).execute().asJsoup()
+        ).awaitSuccess().useAsJsoup()
 
         val script =
             document.selectFirst("script[type='application/json']")?.data() ?: return emptyList()
@@ -54,7 +56,7 @@ class LycorisExtractor(private val client: OkHttpClient) {
         return videos
     }
 
-    private fun fetchAndDecodeVideo(client: OkHttpClient, headers: Headers, episodeId: String): VideoLinksApi {
+    private suspend fun fetchAndDecodeVideo(client: OkHttpClient, headers: Headers, episodeId: String): VideoLinksApi {
         val decryptHeaders = headers.newBuilder()
             .add("x-api-key", DECRYPT_API_KEY)
             .add("Content-Type", "application/json")
@@ -65,25 +67,25 @@ class LycorisExtractor(private val client: OkHttpClient) {
             .build()
 
         val encryptedText = client.newCall(GET(url))
-            .execute().body.string()
+            .awaitSuccess().bodyString()
 
         val textByte = encryptedText.toByteArray(Charsets.ISO_8859_1)
 
-        val base64Data = String(Base64.encode(textByte, Base64.DEFAULT), Charsets.UTF_8)
+        val base64Data = Base64.encodeToString(textByte, Base64.DEFAULT)
 
         val jsonObject = JSONObject()
         jsonObject.put("encoded", base64Data)
 
-        client.newCall(POST(DECRYPTURL, headers = decryptHeaders, body = jsonObject.toString().toRequestBody("application/json".toMediaType()))).execute().use { response ->
-            return response.body.string().parseAs<VideoLinksApi>()
-        }
+        return client.newCall(POST(DECRYPTURL, headers = decryptHeaders, body = jsonObject.toJsonRequestBody()))
+            .awaitSuccess()
+            .parseAs<VideoLinksApi>()
     }
 
-    private fun checkLinks(client: OkHttpClient, link: String): Boolean {
+    private suspend fun checkLinks(client: OkHttpClient, link: String): Boolean {
         if (!link.contains("https://")) return false
 
-        client.newCall(GET(link)).execute().use { response ->
-            return response.code.toString() == "200"
+        client.newCall(GET(link)).await().use { response ->
+            return response.code == 200
         }
     }
 

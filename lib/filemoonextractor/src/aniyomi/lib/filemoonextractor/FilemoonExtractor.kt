@@ -1,19 +1,16 @@
 package aniyomi.lib.filemoonextractor
 
-import android.content.SharedPreferences
 import android.util.Base64
 import android.util.Log
-import androidx.preference.EditTextPreference
-import androidx.preference.PreferenceScreen
 import aniyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.network.GET
+import keiyoushi.utils.bodyString
+import keiyoushi.utils.parseAs
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
-import uy.kohesive.injekt.injectLazy
 import java.net.URI
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
@@ -21,11 +18,10 @@ import javax.crypto.Cipher
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
-class FilemoonExtractor(private val client: OkHttpClient, private val preferences: SharedPreferences? = null) {
+class FilemoonExtractor(private val client: OkHttpClient) {
     private val playlistUtils by lazy { PlaylistUtils(client) }
-    private val json: Json by injectLazy()
 
-    //Credit: https://github.com/skoruppa/docchi-stremio-addon/blob/main/app/players/filemoon.py
+    // Credit: https://github.com/skoruppa/docchi-stremio-addon/blob/main/app/players/filemoon.py
     fun videosFromUrl(
         url: String,
         prefix: String = "Filemoon - ",
@@ -34,7 +30,7 @@ class FilemoonExtractor(private val client: OkHttpClient, private val preference
         return try {
             val httpUrl = url.toHttpUrl()
             val host = httpUrl.host
-            val mediaId = if (httpUrl.pathSegments[0] == "e") {
+            val mediaId = if (httpUrl.pathSegments.size > 1 && httpUrl.pathSegments[0] == "e") {
                 httpUrl.pathSegments[1]
             } else {
                 httpUrl.pathSegments.lastOrNull { it.isNotEmpty() } ?: return emptyList()
@@ -44,7 +40,7 @@ class FilemoonExtractor(private val client: OkHttpClient, private val preference
 
             val embedUrl =
                 client.newCall(GET("https://$host/api/videos/$mediaId/embed/details"))
-                    .execute().body.string()
+                    .execute().bodyString()
                     .substringAfter("embed_frame_url", "")
                     .substringAfter(":")
                     .substringAfter('"')
@@ -74,9 +70,8 @@ class FilemoonExtractor(private val client: OkHttpClient, private val preference
             }.build()
 
             val apiUrl = "https://$embedHost/api/videos/$mediaId/embed/playback"
-            val response = client.newCall(GET(apiUrl, playbackHeaders)).execute()
-            val responseData = response.body.string()
-            val playbackJson = json.decodeFromString<PlaybackResponse>(responseData)
+            val playbackJson = client.newCall(GET(apiUrl, playbackHeaders)).execute()
+                .parseAs<PlaybackResponse>()
 
             var finalSources: List<VideoSource>? = null
 
@@ -85,7 +80,7 @@ class FilemoonExtractor(private val client: OkHttpClient, private val preference
             } else if (playbackJson.playback != null) {
                 val pb = playbackJson.playback
                 val decryptedData = decrypt(pb)
-                val decryptedJson = json.decodeFromString<PlaybackResponse>(decryptedData)
+                val decryptedJson = decryptedData.parseAs<PlaybackResponse>()
                 finalSources = decryptedJson.sources
             }
 
@@ -164,20 +159,6 @@ class FilemoonExtractor(private val client: OkHttpClient, private val preference
         val url: String? = null,
         val label: String? = "Default",
     )
-
-    companion object {
-        fun addSubtitlePref(screen: PreferenceScreen) {
-            EditTextPreference(screen.context).apply {
-                key = PREF_SUBTITLE_KEY
-                title = "Filemoon subtitle preference"
-                summary = "Leave blank to use all subs"
-                setDefaultValue(PREF_SUBTITLE_DEFAULT)
-            }.also(screen::addPreference)
-        }
-
-        private const val PREF_SUBTITLE_KEY = "pref_filemoon_sub_lang_key"
-        private const val PREF_SUBTITLE_DEFAULT = "eng"
-    }
 }
 
 fun String.encodeUrlPath(): String {

@@ -25,6 +25,7 @@ class Anikyuu :
     private val byseExtractor by lazy { ByseExtractor(client, headers, baseUrl) }
     private val filemoonExtractor by lazy { FilemoonExtractor(client) }
     private val strmupExtractor by lazy { StrmupExtractor(client, headers) }
+
     override suspend fun getVideoList(url: String, name: String): List<Video> {
         Log.d(tag, "Fetching videos from: $url")
 

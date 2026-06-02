@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.animeextension.pt.meusanimes
 
+import aniyomi.lib.bloggerextractor.BloggerExtractor
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.SAnime
@@ -7,15 +8,14 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
-import eu.kanade.tachiyomi.util.asJsoup
-import okhttp3.OkHttpClient
+import keiyoushi.utils.bodyString
+import keiyoushi.utils.useAsJsoup
+import kotlinx.coroutines.runBlocking
 import okhttp3.Request
 import okhttp3.Response
 import org.json.JSONObject
 import org.jsoup.nodes.Document
 import java.net.URLEncoder
-import java.text.SimpleDateFormat
-import java.util.Locale
 
 class MeusAnimes : AnimeHttpSource() {
 
@@ -24,19 +24,9 @@ class MeusAnimes : AnimeHttpSource() {
     override val lang = "pt-BR"
     override val supportsLatest = false
 
-    override val client: OkHttpClient = OkHttpClient()
-
-    // RegEx patterns to extract video player URLs
-    private val playerLegRegex = """ "player_leg"\s*:\s*"(https://www\.blogger\.com/video\.g\?token=[^"]+)""".toRegex()
-    private val playerDubRegex = """ "player_dub"\s*:\s*"(https://www\.blogger\.com/video\.g\?token=[^"]+)""".toRegex()
-
     override fun headersBuilder() = super.headersBuilder()
         .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
         .add("Referer", baseUrl)
-
-    private val dateFormat by lazy {
-        SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.ENGLISH)
-    }
 
     // Requests: Popular anime request
     override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/populares?page=$page", headers)
@@ -53,7 +43,7 @@ class MeusAnimes : AnimeHttpSource() {
 
     // Parse Lists: Parse popular anime list
     override fun popularAnimeParse(response: Response): AnimesPage {
-        val document = response.asJsoup()
+        val document = response.useAsJsoup()
         val animes = document.select("div.grid > div > a[href^=\"/anime/\"]")
             .map { element ->
                 SAnime.create().apply {
@@ -78,7 +68,7 @@ class MeusAnimes : AnimeHttpSource() {
 
     // Parse search results from API
     override fun searchAnimeParse(response: Response): AnimesPage {
-        val body = response.body.string()
+        val body = response.bodyString()
         val json = JSONObject(body)
 
         val data = json.optJSONArray("data") ?: return AnimesPage(emptyList(), false)
@@ -175,7 +165,7 @@ class MeusAnimes : AnimeHttpSource() {
 
     // Main anime details parser
     override fun animeDetailsParse(response: Response): SAnime {
-        val document = response.asJsoup()
+        val document = response.useAsJsoup()
         val json = extractAnimeData(document)
             ?: return parseAnimeFromMeta(document)
 
@@ -243,7 +233,7 @@ class MeusAnimes : AnimeHttpSource() {
 
     // Episodes: Parse episode list from JSON data
     override fun episodeListParse(response: Response): List<SEpisode> {
-        val document = response.asJsoup()
+        val document = response.useAsJsoup()
         val json = extractAnimeData(document) ?: return emptyList()
         val episodes = json.optJSONArray("Episode") ?: return emptyList()
 
@@ -264,7 +254,7 @@ class MeusAnimes : AnimeHttpSource() {
 
     // Parse video list from episode page
     override fun videoListParse(response: Response): List<Video> {
-        val html = response.body.string()
+        val html = response.bodyString()
         val videoList = mutableListOf<Video>()
         val extractor = BloggerExtractor(client)
 
@@ -290,16 +280,17 @@ class MeusAnimes : AnimeHttpSource() {
             if (url.isEmpty() || !url.contains("blogger.com")) return
 
             runCatching {
-                extractor.videosFromUrl(url, googleHeaders).forEach { video ->
-                    videoList.add(
-                        Video(
-                            video.url,
-                            "$prefix: ${video.quality}",
-                            video.videoUrl,
-                            googleHeaders,
-                        ),
-                    )
-                }
+                runBlocking { extractor.videosFromUrl(url, googleHeaders) }
+                    .forEach { video ->
+                        videoList.add(
+                            Video(
+                                video.url,
+                                "$prefix: ${video.quality}",
+                                video.videoUrl,
+                                googleHeaders,
+                            ),
+                        )
+                    }
             }
         }
 

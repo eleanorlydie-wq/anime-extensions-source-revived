@@ -28,11 +28,16 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.ParsedAnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
-import eu.kanade.tachiyomi.util.asJsoup
+import eu.kanade.tachiyomi.network.awaitSuccess
 import keiyoushi.lib.cryptoaes.CryptoAES
+import keiyoushi.utils.bodyString
 import keiyoushi.utils.getPreferencesLazy
+import keiyoushi.utils.parallelCatchingFlatMap
+import keiyoushi.utils.parallelCatchingFlatMapBlocking
+import keiyoushi.utils.parseAs
+import keiyoushi.utils.useAsJsoup
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -41,9 +46,7 @@ import okhttp3.Response
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
-import uy.kohesive.injekt.api.get
 import java.net.URLDecoder
-import kotlin.text.RegexOption
 
 open class Serieskao :
     ParsedAnimeHttpSource(),
@@ -58,8 +61,6 @@ open class Serieskao :
     override val supportsLatest = false
 
     private val preferences by getPreferencesLazy()
-
-    private val json by lazy { Json { ignoreUnknownKeys = true } }
 
     companion object {
         const val PREF_QUALITY_KEY = "preferred_quality"
@@ -82,7 +83,7 @@ open class Serieskao :
         private const val AES_KEY = "Ak7qrvvH4WKYxV2OgaeHAEg2a5eh16vE"
         private val DATA_LINK_REGEX = """dataLink\s*=\s*([^;]+);""".toRegex(RegexOption.DOT_MATCHES_ALL)
         private val VIDEO_SOURCES_REGEX = """var\s+videoSources\s*=\s*\[(.+?)]\s*;""".toRegex(RegexOption.DOT_MATCHES_ALL)
-        private val SOURCE_URL_REGEX = """['\"]([^'\"]+)['\"]""".toRegex()
+        private val SOURCE_URL_REGEX = """['"]([^'"]+)['"]""".toRegex()
     }
 
     override fun popularAnimeSelector(): String = "a.poster-card"
@@ -104,7 +105,7 @@ open class Serieskao :
     override fun popularAnimeNextPageSelector(): String = "a.page-link"
 
     override fun episodeListParse(response: Response): List<SEpisode> {
-        val doc = response.asJsoup()
+        val doc = response.useAsJsoup()
         val url = response.request.url.toString()
 
         if (url.contains("/pelicula/")) {
@@ -166,7 +167,7 @@ open class Serieskao :
     override fun episodeFromElement(element: Element) = throw UnsupportedOperationException()
 
     override fun videoListParse(response: Response): List<Video> {
-        val document = response.asJsoup()
+        val document = response.useAsJsoup()
         val scriptData = document.select("script")
             .asSequence()
             .map(Element::data)
@@ -184,36 +185,23 @@ open class Serieskao :
 
         val referer = response.request.url.toString()
         val headers = headersBuilder().set("Referer", referer).build()
-        val videos = mutableListOf<Video>()
 
-        videoUrls.forEach { videoUrl ->
-            runCatching {
-                client.newCall(GET(videoUrl, headers)).execute().use { res ->
-                    val body = res.body?.string().orEmpty()
-                    if (body.isBlank()) return@use
+        return videoUrls.parallelCatchingFlatMapBlocking { videoUrl ->
+            val body = client.newCall(GET(videoUrl, headers)).awaitSuccess().bodyString()
+            if (body.isBlank()) return@parallelCatchingFlatMapBlocking emptyList()
 
-                    val bodyDoc = Jsoup.parse(body)
-                    val parsedLinks = extractNewExtractorLinks(bodyDoc, body)
+            val bodyDoc = Jsoup.parse(body)
+            val parsedLinks = extractNewExtractorLinks(bodyDoc, body)
 
-                    if (parsedLinks.isNullOrEmpty()) {
-                        Log.w("SeriesKao", "Sin enlaces descifrados para $videoUrl")
-                        return@use
-                    }
+            if (parsedLinks.isNullOrEmpty()) {
+                Log.w("SeriesKao", "Sin enlaces descifrados para $videoUrl")
+                return@parallelCatchingFlatMapBlocking emptyList()
+            }
 
-                    parsedLinks.forEach { (url, lang) ->
-                        runCatching {
-                            videos += serverVideoResolver(url, lang)
-                        }.onFailure {
-                            Log.e("SeriesKao", "Error al procesar URL de video: $url", it)
-                        }
-                    }
-                }
-            }.onFailure {
-                Log.e("SeriesKao", "Error al obtener cuerpo de videoUrl: $videoUrl", it)
+            parsedLinks.parallelCatchingFlatMap { (url, lang) ->
+                serverVideoResolver(url, lang)
             }
         }
-
-        return videos
     }
 
     private fun extractNewExtractorLinks(doc: Document, htmlContent: String): List<Pair<String, String>>? {
@@ -231,7 +219,7 @@ open class Serieskao :
         val jsonPayload = resolveDataLink(rawExpression) ?: return null
 
         val items = runCatching {
-            json.decodeFromString<List<Item>>(jsonPayload)
+            jsonPayload.parseAs<List<Item>>()
         }.getOrElse {
             Log.e("SeriesKao", "No se pudo parsear dataLink", it)
             return null
@@ -328,7 +316,7 @@ open class Serieskao :
 
         return runCatching {
             val decoded = Base64.decode(payload, Base64.URL_SAFE or Base64.NO_WRAP)
-            val element = json.parseToJsonElement(String(decoded))
+            val element = String(decoded).parseAs<JsonElement>()
             val obj = element.jsonObject
 
             val link = obj["link"]?.jsonPrimitive?.contentOrNull
@@ -361,50 +349,63 @@ open class Serieskao :
     private val streamSilkExtractor by lazy { StreamSilkExtractor(client) }
     private val vidGuardExtractor by lazy { VidGuardExtractor(client) }
 
-    private fun serverVideoResolver(url: String, prefix: String = ""): List<Video> {
-        return runCatching {
-            when {
-                arrayOf("voe").any(url) -> voeExtractor.videosFromUrl(url, "$prefix ")
-                arrayOf("ok.ru", "okru").any(url) -> okruExtractor.videosFromUrl(url, prefix)
-                arrayOf("filemoon", "moonplayer").any(url) -> filemoonExtractor.videosFromUrl(url, prefix = "$prefix Filemoon:")
-                !url.contains("disable") && (arrayOf("amazon", "amz").any(url)) -> {
-                    val body = client.newCall(GET(url)).execute().asJsoup()
-                    return if (body.select("script:containsData(var shareId)").toString().isNotBlank()) {
-                        val shareId = body.selectFirst("script:containsData(var shareId)")!!.data()
-                            .substringAfter("shareId = \"").substringBefore("\"")
-                        val amazonApiJson = client.newCall(GET("https://www.amazon.com/drive/v1/shares/$shareId?resourceVersion=V2&ContentType=JSON&asset=ALL"))
-                            .execute().asJsoup()
-                        val epId = amazonApiJson.toString().substringAfter("\"id\":\"").substringBefore("\"")
-                        val amazonApi =
-                            client.newCall(GET("https://www.amazon.com/drive/v1/nodes/$epId/children?resourceVersion=V2&ContentType=JSON&limit=200&sort=%5B%22kind+DESC%22%2C+%22modifiedDate+DESC%22%5D&asset=ALL&tempLink=true&shareId=$shareId"))
-                                .execute().asJsoup()
-                        val videoUrl = amazonApi.toString().substringAfter("\"FOLDER\":").substringAfter("tempLink\":\"").substringBefore("\"")
-                        listOf(Video(videoUrl, "$prefix Amazon", videoUrl))
-                    } else {
-                        emptyList()
-                    }
-                }
-                arrayOf("uqload").any(url) -> uqloadExtractor.videosFromUrl(url, prefix)
-                arrayOf("mp4upload").any(url) -> mp4uploadExtractor.videosFromUrl(url, headers, prefix = "$prefix ")
-                arrayOf("wishembed", "streamwish", "strwish", "wish").any(url) -> {
-                    streamWishExtractor.videosFromUrl(url, videoNameGen = { "$prefix StreamWish:$it" })
-                }
-                arrayOf("doodstream", "dood.", "ds2play", "doods.").any(url) -> {
-                    val url2 = url.replace("https://doodstream.com/e/", "https://d0000d.com/e/")
-                    doodExtractor.videosFromUrl(url2, "$prefix DoodStream")
-                }
-                arrayOf("streamlare").any(url) -> streamlareExtractor.videosFromUrl(url, prefix)
-                arrayOf("yourupload", "upload").any(url) -> yourUploadExtractor.videoFromUrl(url, headers = headers, prefix = "$prefix ")
-                arrayOf("burstcloud", "burst").any(url) -> burstCloudExtractor.videoFromUrl(url, headers = headers, prefix = "$prefix ")
-                arrayOf("fastream").any(url) -> fastreamExtractor.videosFromUrl(url, prefix = "$prefix Fastream:")
-                arrayOf("upstream").any(url) -> upstreamExtractor.videosFromUrl(url, prefix = "$prefix ")
-                arrayOf("streamsilk").any(url) -> streamSilkExtractor.videosFromUrl(url, videoNameGen = { "$prefix StreamSilk:$it" })
-                arrayOf("streamtape", "stp", "stape").any(url) -> streamTapeExtractor.videosFromUrl(url, quality = "$prefix StreamTape")
-                arrayOf("ahvsh", "streamhide", "guccihide", "streamvid", "vidhide").any(url) -> streamHideVidExtractor.videosFromUrl(url, videoNameGen = { "$prefix StreamHideVid:$it" })
-                arrayOf("vembed", "guard", "listeamed", "bembed", "vgfplay").any(url) -> vidGuardExtractor.videosFromUrl(url, prefix = "$prefix ")
-                else -> emptyList()
+    private suspend fun serverVideoResolver(url: String, prefix: String = ""): List<Video> = when {
+        arrayOf("voe").any(url) -> voeExtractor.videosFromUrl(url, "$prefix ")
+
+        arrayOf("ok.ru", "okru").any(url) -> okruExtractor.videosFromUrl(url, prefix)
+
+        arrayOf("filemoon", "moonplayer").any(url) -> filemoonExtractor.videosFromUrl(url, prefix = "$prefix Filemoon:")
+
+        !url.contains("disable") && (arrayOf("amazon", "amz").any(url)) -> {
+            val body = client.newCall(GET(url)).awaitSuccess().useAsJsoup()
+            if (body.select("script:containsData(var shareId)").toString().isNotBlank()) {
+                val shareId = body.selectFirst("script:containsData(var shareId)")!!.data()
+                    .substringAfter("shareId = \"").substringBefore("\"")
+                val amazonApiJson = client.newCall(GET("https://www.amazon.com/drive/v1/shares/$shareId?resourceVersion=V2&ContentType=JSON&asset=ALL"))
+                    .awaitSuccess().useAsJsoup()
+                val epId = amazonApiJson.toString().substringAfter("\"id\":\"").substringBefore("\"")
+                val amazonApi =
+                    client.newCall(GET("https://www.amazon.com/drive/v1/nodes/$epId/children?resourceVersion=V2&ContentType=JSON&limit=200&sort=%5B%22kind+DESC%22%2C+%22modifiedDate+DESC%22%5D&asset=ALL&tempLink=true&shareId=$shareId"))
+                        .awaitSuccess().useAsJsoup()
+                val videoUrl = amazonApi.toString().substringAfter("\"FOLDER\":").substringAfter("tempLink\":\"").substringBefore("\"")
+                listOf(Video(videoUrl, "$prefix Amazon", videoUrl))
+            } else {
+                emptyList()
             }
-        }.getOrNull() ?: emptyList()
+        }
+
+        arrayOf("uqload").any(url) -> uqloadExtractor.videosFromUrl(url, prefix)
+
+        arrayOf("mp4upload").any(url) -> mp4uploadExtractor.videosFromUrl(url, headers, prefix = "$prefix ")
+
+        arrayOf("wishembed", "streamwish", "strwish", "wish").any(url) -> {
+            streamWishExtractor.videosFromUrl(url, videoNameGen = { "$prefix StreamWish:$it" })
+        }
+
+        arrayOf("doodstream", "dood.", "ds2play", "doods.").any(url) -> {
+            val url2 = url.replace("https://doodstream.com/e/", "https://d0000d.com/e/")
+            doodExtractor.videosFromUrl(url2, "$prefix DoodStream")
+        }
+
+        arrayOf("streamlare").any(url) -> streamlareExtractor.videosFromUrl(url, prefix)
+
+        arrayOf("yourupload", "upload").any(url) -> yourUploadExtractor.videoFromUrl(url, headers = headers, prefix = "$prefix ")
+
+        arrayOf("burstcloud", "burst").any(url) -> burstCloudExtractor.videoFromUrl(url, headers = headers, prefix = "$prefix ")
+
+        arrayOf("fastream").any(url) -> fastreamExtractor.videosFromUrl(url, prefix = "$prefix Fastream:")
+
+        arrayOf("upstream").any(url) -> upstreamExtractor.videosFromUrl(url, prefix = "$prefix ")
+
+        arrayOf("streamsilk").any(url) -> streamSilkExtractor.videosFromUrl(url, videoNameGen = { "$prefix StreamSilk:$it" })
+
+        arrayOf("streamtape", "stp", "stape").any(url) -> streamTapeExtractor.videosFromUrl(url, quality = "$prefix StreamTape")
+
+        arrayOf("ahvsh", "streamhide", "guccihide", "streamvid", "vidhide").any(url) -> vidHideExtractor.videosFromUrl(url, videoNameGen = { "$prefix StreamHideVid:$it" })
+
+        arrayOf("vembed", "guard", "listeamed", "bembed", "vgfplay").any(url) -> vidGuardExtractor.videosFromUrl(url, prefix = "$prefix ")
+
+        else -> emptyList()
     }
 
     private fun getFirstMatch(regex: Regex, input: String): String = regex.find(input)?.groupValues?.get(1) ?: ""
@@ -451,8 +452,7 @@ open class Serieskao :
         title = document.selectFirst("h1.m-b-5")?.text()?.ifBlank { "Sin título" } ?: "Sin título"
         thumbnail_url = document.selectFirst("div.card-body div.row div.col-sm-3 img.img-fluid")
             ?.attr("src")?.replace("/w154/", "/w500/")
-            ?: ""
-        description = document.selectFirst("div.col-sm-4 div.text-large")?.ownText() ?: ""
+        description = document.selectFirst("div.col-sm-4 div.text-large")?.ownText()
         genre = document.select("div.p-v-20.p-h-15.text-center a span").joinToString { it.text() }
         status = SAnime.COMPLETED
     }
@@ -538,13 +538,6 @@ open class Serieskao :
             entryValues = SERVER_LIST
             setDefaultValue(PREF_SERVER_DEFAULT)
             summary = "%s"
-
-            setOnPreferenceChangeListener { _, newValue ->
-                val selected = newValue as String
-                val index = findIndexOfValue(selected)
-                val entry = entryValues[index] as String
-                preferences.edit().putString(key, entry).commit()
-            }
         }.also(screen::addPreference)
 
         ListPreference(screen.context).apply {
@@ -554,13 +547,6 @@ open class Serieskao :
             entryValues = QUALITY_LIST
             setDefaultValue(PREF_QUALITY_DEFAULT)
             summary = "%s"
-
-            setOnPreferenceChangeListener { _, newValue ->
-                val selected = newValue as String
-                val index = findIndexOfValue(selected)
-                val entry = entryValues[index] as String
-                preferences.edit().putString(key, entry).commit()
-            }
         }.also(screen::addPreference)
 
         ListPreference(screen.context).apply {
@@ -570,13 +556,6 @@ open class Serieskao :
             entryValues = LANGUAGE_LIST
             setDefaultValue(PREF_LANGUAGE_DEFAULT)
             summary = "%s"
-
-            setOnPreferenceChangeListener { _, newValue ->
-                val selected = newValue as String
-                val index = findIndexOfValue(selected)
-                val entry = entryValues[index] as String
-                preferences.edit().putString(key, entry).commit()
-            }
         }.also(screen::addPreference)
     }
 }

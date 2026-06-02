@@ -9,7 +9,9 @@ import eu.kanade.tachiyomi.animesource.online.ParsedAnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.network.awaitSuccess
-import eu.kanade.tachiyomi.util.asJsoup
+import keiyoushi.utils.bodyString
+import keiyoushi.utils.parseAs
+import keiyoushi.utils.useAsJsoup
 import kotlinx.serialization.json.Json
 import okhttp3.FormBody
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -69,17 +71,32 @@ class SushiAnimes : ParsedAnimeHttpSource() {
         page: Int,
         query: String,
         filters: AnimeFilterList,
-    ): AnimesPage = if (query.startsWith(PREFIX_SEARCH)) {
-        val path = query.removePrefix(PREFIX_SEARCH)
-        client.newCall(GET("$baseUrl/$path"))
-            .awaitSuccess()
-            .use(::searchAnimeByIdParse)
-    } else {
-        super.getSearchAnime(page, query, filters)
+    ): AnimesPage {
+        if (query.startsWith("https://")) {
+            val url = query.toHttpUrl()
+            if (url.host != baseUrl.toHttpUrl().host) {
+                throw Exception("Unsupported url")
+            }
+            val searchQuery = if (url.pathSegments.size > 1) {
+                "${url.pathSegments[0]}/${url.pathSegments[1]}"
+            } else {
+                url.pathSegments.getOrNull(0)?.takeIf(String::isNotBlank)
+                    ?: throw Exception("Unsupported url")
+            }
+            return getSearchAnime(page, "${PREFIX_SEARCH}$searchQuery", filters)
+        }
+
+        if (query.startsWith(PREFIX_SEARCH)) {
+            val path = query.removePrefix(PREFIX_SEARCH)
+            return client.newCall(GET("$baseUrl/$path"))
+                .awaitSuccess()
+                .use(::searchAnimeByIdParse)
+        }
+        return super.getSearchAnime(page, query, filters)
     }
 
     private fun searchAnimeByIdParse(response: Response): AnimesPage {
-        val details = animeDetailsParse(response).apply {
+        val details = animeDetailsParse(response.useAsJsoup()).apply {
             setUrlWithoutDomain(response.request.url.toString())
             initialized = true
         }
@@ -123,7 +140,7 @@ class SushiAnimes : ParsedAnimeHttpSource() {
 
     // ============================== Episodes ==============================
     override fun episodeListParse(response: Response): List<SEpisode> {
-        val document = getRealDoc(response.asJsoup())
+        val document = getRealDoc(response.useAsJsoup())
         val script = document.selectFirst("script[type=\"application/ld+json\"]")
             ?: return emptyList()
 
@@ -141,7 +158,7 @@ class SushiAnimes : ParsedAnimeHttpSource() {
         val jsonString = script.data().trim()
             .let(::sanitizeLdJsonNames)
 
-        val anime = json.decodeFromString<AnimeDto>(jsonString)
+        val anime = jsonString.parseAs<AnimeDto>(json)
 
         val episodes = anime.containsSeason.flatMap { season ->
             season.episode.map { episode ->
@@ -162,7 +179,7 @@ class SushiAnimes : ParsedAnimeHttpSource() {
 
     // ============================ Video Links =============================
     override fun videoListParse(response: Response): List<Video> {
-        val document = response.asJsoup()
+        val document = response.useAsJsoup()
 
         val id = document.selectFirst("[data-embed]")?.attr("data-embed") ?: return emptyList()
 
@@ -171,7 +188,7 @@ class SushiAnimes : ParsedAnimeHttpSource() {
             .build()
 
         val request = POST("$baseUrl/ajax/embed", headers, formBody)
-        val body = client.newCall(request).execute().body.string()
+        val body = client.newCall(request).execute().bodyString()
 
         val videoUrl = body.substringAfterLast("playerEmbed", "")
             .substringAfter("\"")
@@ -193,7 +210,7 @@ class SushiAnimes : ParsedAnimeHttpSource() {
         if (menu != null) {
             val originalUrl = menu.attr("href")
             val response = client.newCall(GET(originalUrl, headers)).execute()
-            return response.asJsoup()
+            return response.useAsJsoup()
         }
 
         return document

@@ -1,19 +1,20 @@
 package eu.kanade.tachiyomi.animeextension.pt.animeito.extractors
 
 import android.util.Base64
+import aniyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.animesource.model.Video
-import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
-import eu.kanade.tachiyomi.lib.unpacker.Unpacker
 import eu.kanade.tachiyomi.network.GET
-import eu.kanade.tachiyomi.util.asJsoup
+import eu.kanade.tachiyomi.network.awaitSuccess
+import keiyoushi.lib.unpacker.Unpacker
+import keiyoushi.utils.useAsJsoup
 import okhttp3.Headers
 import okhttp3.OkHttpClient
 
 class AnimeItoExtractor(private val client: OkHttpClient, private val headers: Headers) {
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
 
-    fun videosFromUrl(url: String): List<Video> {
-        val playerDoc = client.newCall(GET(url, headers)).execute().asJsoup()
+    suspend fun videosFromUrl(url: String): List<Video> {
+        val playerDoc = client.newCall(GET(url, headers)).awaitSuccess().useAsJsoup()
         val encodedScript = playerDoc.selectFirst("script:containsData(AnimeiTo.Run)")
             ?.data()
 
@@ -21,8 +22,7 @@ class AnimeItoExtractor(private val client: OkHttpClient, private val headers: H
             val decodedData = encodedScript.substringAfter("(").substringBefore(")")
                 .replace(Regex("\"\\s*\\+\\s*\""), "") // Remove concatenation
                 .replace(Regex("[^A-Za-z0-9+/=]"), "") // Remove non-base64 characters
-                .let { Base64.decode(it, Base64.DEFAULT) }
-                .let(::String)
+                .let { String(Base64.decode(it, Base64.DEFAULT)) }
             Unpacker.unpack(decodedData).ifEmpty { return emptyList() }
         } else {
             playerDoc.selectFirst("script:containsData(const player)")?.data()

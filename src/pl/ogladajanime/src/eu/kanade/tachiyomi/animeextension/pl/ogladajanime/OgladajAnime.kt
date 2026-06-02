@@ -12,8 +12,8 @@ import eu.kanade.tachiyomi.animesource.online.ParsedAnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
 import keiyoushi.utils.getPreferencesLazy
+import keiyoushi.utils.parseAs
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
 import okhttp3.FormBody
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -22,7 +22,6 @@ import okhttp3.Response
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
-import uy.kohesive.injekt.injectLazy
 
 class OgladajAnime :
     ParsedAnimeHttpSource(),
@@ -35,8 +34,6 @@ class OgladajAnime :
     override val lang = "pl"
 
     override val supportsLatest = true
-
-    private val json: Json by injectLazy()
 
     private val apiHeaders = Headers.Builder()
         .set("Accept", "application/json, text/plain, */*")
@@ -54,11 +51,11 @@ class OgladajAnime :
             .add("page", "$page")
             .add("search_type", "page")
             .build()
-        return POST("https://ogladajanime.pl/manager.php?action=get_search", apiHeaders, body)
+        return POST("$baseUrl/manager.php?action=get_search", apiHeaders, body)
     }
 
     override fun popularAnimeParse(response: Response): AnimesPage {
-        val animeParse: FetchAnime = json.decodeFromString(response.body.string())
+        val animeParse = response.parseAs<FetchAnime>()
 
         val cleanHtml = animeParse.data.replace(Regex("[\\t\\n\\r]+"), "")
         var counter = 0
@@ -87,7 +84,7 @@ class OgladajAnime :
             .add("page", "$page")
             .add("search_type", "new")
             .build()
-        return POST("https://ogladajanime.pl/manager.php?action=get_search", apiHeaders, body)
+        return POST("$baseUrl/manager.php?action=get_search", apiHeaders, body)
     }
 
     override fun latestUpdatesParse(response: Response): AnimesPage = popularAnimeParse(response)
@@ -106,7 +103,7 @@ class OgladajAnime :
             .add("search_type", "name")
             .add("search", query)
             .build()
-        return POST("https://ogladajanime.pl/manager.php?action=get_search", apiHeaders, body)
+        return POST("$baseUrl/manager.php?action=get_search", apiHeaders, body)
     }
 
     override fun searchAnimeParse(response: Response): AnimesPage = popularAnimeParse(response)
@@ -172,7 +169,7 @@ class OgladajAnime :
     override fun videoListRequest(episode: SEpisode): Request = GET("$baseUrl:8443/Player/${episode.url}", apiHeaders)
 
     override fun videoListParse(response: Response): List<Video> {
-        val players = json.decodeFromString<List<ApiPlayer>>(response.body.string())
+        val players = response.parseAs<List<ApiPlayer>>()
 
         return players.map { player ->
             val host = Regex("""https?://(?:www\.)?([^/]+)""")
@@ -229,9 +226,7 @@ class OgladajAnime :
     override fun List<Video>.sort(): List<Video> {
         val quality = preferences.getString("preferred_quality", "1080")!!
         return this.sortedWith(
-            compareBy(
-                { it.quality.contains(quality) },
-            ),
+            compareBy { it.quality.contains(quality) },
         ).reversed()
     }
 
@@ -243,13 +238,6 @@ class OgladajAnime :
             entryValues = arrayOf("1080", "720", "480", "360")
             setDefaultValue("1080")
             summary = "%s"
-
-            setOnPreferenceChangeListener { _, newValue ->
-                val selected = newValue as String
-                val index = findIndexOfValue(selected)
-                val entry = entryValues[index] as String
-                preferences.edit().putString(key, entry).commit()
-            }
         }
         screen.addPreference(videoQualityPref)
     }

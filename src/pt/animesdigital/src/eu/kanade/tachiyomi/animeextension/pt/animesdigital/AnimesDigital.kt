@@ -15,9 +15,11 @@ import eu.kanade.tachiyomi.animesource.online.ParsedAnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.network.awaitSuccess
-import eu.kanade.tachiyomi.util.asJsoup
 import keiyoushi.utils.getPreferencesLazy
+import keiyoushi.utils.parallelCatchingFlatMap
+import keiyoushi.utils.parallelCatchingFlatMapBlocking
 import keiyoushi.utils.parseAs
+import keiyoushi.utils.useAsJsoup
 import kotlinx.serialization.Serializable
 import okhttp3.FormBody
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -104,7 +106,7 @@ class AnimesDigital :
     }
 
     private fun searchAnimeByIdParse(response: Response): AnimesPage {
-        val details = animeDetailsParse(response.asJsoup()).apply {
+        val details = animeDetailsParse(response.useAsJsoup()).apply {
             setUrlWithoutDomain(response.request.url.toString())
             initialized = true
         }
@@ -113,7 +115,7 @@ class AnimesDigital :
     }
 
     private val searchToken by lazy {
-        client.newCall(GET("$baseUrl/animes-legendados-online")).execute().asJsoup()
+        client.newCall(GET("$baseUrl/animes-legendados-online")).execute().useAsJsoup()
             .selectFirst("div.menu_filter_box")!!
             .attr("data-secury")
     }
@@ -193,24 +195,20 @@ class AnimesDigital :
 
     // ============================== Episodes ==============================
     override fun episodeListParse(response: Response): List<SEpisode> {
-        val doc = getRealDoc(response.asJsoup())
-        val pagination = doc.selectFirst("ul.content-pagination")
-        return if (pagination != null) {
-            val episodes = mutableListOf<SEpisode>()
-            episodes += doc.select(episodeListSelector()).map(::episodeFromElement)
-            val lastPage =
-                doc.selectFirst("ul.content-pagination > li:nth-last-child(2) > a")!!.text()
-                    .toInt()
-            for (i in 2..lastPage) {
+        val doc = getRealDoc(response.useAsJsoup())
+        val episodes = mutableListOf<SEpisode>()
+        episodes += doc.select(episodeListSelector()).map(::episodeFromElement)
+        val lastPage =
+            doc.selectFirst("ul.content-pagination > li:nth-last-child(2) > a")?.text()
+                ?.toIntOrNull()
+        episodes += lastPage?.let { 2..it }
+            ?.parallelCatchingFlatMapBlocking { i ->
                 val request = GET(doc.location() + "/page/$i", headers)
-                val res = client.newCall(request).execute()
-                val pageDoc = res.asJsoup()
-                episodes += pageDoc.select(episodeListSelector()).map(::episodeFromElement)
-            }
-            episodes
-        } else {
-            doc.select(episodeListSelector()).map(::episodeFromElement)
-        }
+                val res = client.newCall(request).awaitSuccess()
+                val pageDoc = res.useAsJsoup()
+                pageDoc.select(episodeListSelector()).map(::episodeFromElement)
+            } ?: emptyList()
+        return episodes
     }
 
     override fun episodeListSelector() = "div.item_ep > a"
@@ -225,12 +223,10 @@ class AnimesDigital :
 
     // ============================ Video Links =============================
     override fun videoListParse(response: Response): List<Video> {
-        val player = response.asJsoup().selectFirst("div#player")!!
-        return player.select("div.tab-video").flatMap { div ->
-            div.select(videoListSelector()).flatMap { element ->
-                runCatching {
-                    videosFromElement(element)
-                }.onFailure { it.printStackTrace() }.getOrElse { emptyList() }
+        val player = response.useAsJsoup().selectFirst("div#player")!!
+        return player.select("div.tab-video").parallelCatchingFlatMapBlocking { div ->
+            div.select(videoListSelector()).parallelCatchingFlatMap { element ->
+                videosFromElement(element)
             }
         }
     }
@@ -238,16 +234,16 @@ class AnimesDigital :
     private val protectorExtractor by lazy { ProtectorExtractor(client) }
     private val bloggerExtractor by lazy { BloggerExtractor(client) }
 
-    private fun videosFromElement(element: Element): List<Video> = when (element.tagName()) {
+    private suspend fun videosFromElement(element: Element): List<Video> = when (element.tagName()) {
         "iframe" -> {
             val url = element.absUrl("data-lazy-src").ifEmpty { element.absUrl("src") }
             when {
                 "blogger.com" in url -> bloggerExtractor.videosFromUrl(url, headers)
                 else -> {
-                    client.newCall(GET(url, headers)).execute()
-                        .asJsoup()
+                    client.newCall(GET(url, headers)).awaitSuccess()
+                        .useAsJsoup()
                         .select(videoListSelector())
-                        .flatMap(::videosFromElement)
+                        .parallelCatchingFlatMap(::videosFromElement)
                 }
             }
         }
@@ -277,12 +273,6 @@ class AnimesDigital :
             entryValues = PREF_QUALITY_ENTRIES
             setDefaultValue(PREF_QUALITY_DEFAULT)
             summary = "%s"
-            setOnPreferenceChangeListener { _, newValue ->
-                val selected = newValue as String
-                val index = findIndexOfValue(selected)
-                val entry = entryValues[index] as String
-                preferences.edit().putString(key, entry).commit()
-            }
         }.also(screen::addPreference)
     }
 
@@ -297,7 +287,7 @@ class AnimesDigital :
     private fun getRealDoc(document: Document): Document = document.selectFirst("div.subitem > a:contains(menu)")?.let { link ->
         client.newCall(GET(link.attr("href")))
             .execute()
-            .asJsoup()
+            .useAsJsoup()
     } ?: document
 
     private fun Element.getInfo(key: String): String? = selectFirst("div.info:has(span:containsOwn($key))")?.run {

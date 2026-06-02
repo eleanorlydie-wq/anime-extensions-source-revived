@@ -3,6 +3,9 @@ package aniyomi.lib.streamupextractor
 import android.util.Base64
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.network.GET
+import eu.kanade.tachiyomi.network.awaitSuccess
+import keiyoushi.utils.bodyString
+import keiyoushi.utils.decodeHex
 import keiyoushi.utils.parseAs
 import kotlinx.serialization.Serializable
 import okhttp3.Headers
@@ -13,11 +16,11 @@ import javax.crypto.spec.SecretKeySpec
 
 class StreamupExtractor(private val client: OkHttpClient) {
     // Credit: https://github.com/skoruppa/docchi-stremio-addon/blob/main/app/players/streamup.py
-    fun getVideosFromUrl(url: String, headers: Headers, prefix: String): List<Video> {
+    suspend fun getVideosFromUrl(url: String, headers: Headers, prefix: String): List<Video> {
         val videos = mutableListOf<Video>()
 
-        val response = client.newCall(GET(url, headers = headers)).execute()
-        val body = response.body.string()
+        val response = client.newCall(GET(url, headers = headers)).awaitSuccess()
+        val body = response.bodyString()
 
         val requestUrl = response.request.url
         val baseUrl = "${requestUrl.scheme}://${requestUrl.host}"
@@ -28,11 +31,13 @@ class StreamupExtractor(private val client: OkHttpClient) {
             val encodedMatch = Regex("""decodePrintable95\("([a-f0-9]+)"""").find(body)
             val shiftMatch = Regex("""__enc_shift\s*=\s*(\d+)""").find(body)
 
-            if (encodedMatch != null && shiftMatch != null) {
-                streamUrl = decodePrintable95(
-                    encodedMatch.groupValues[1],
-                    shiftMatch.groupValues[1].toInt(),
-                )
+            runCatching {
+                if (encodedMatch != null && shiftMatch != null) {
+                    streamUrl = decodePrintable95(
+                        encodedMatch.groupValues[1],
+                        shiftMatch.groupValues[1].toInt(),
+                    )
+                }
             }
         }
 
@@ -51,15 +56,15 @@ class StreamupExtractor(private val client: OkHttpClient) {
                     .add("X-Requested-With", "XMLHttpRequest")
                     .build()
 
-                val keyResponse = client.newCall(GET(keyUrl, keyHeaders)).execute()
-                val keyB64 = keyResponse.body.string().trim()
+                val keyResponse = client.newCall(GET(keyUrl, keyHeaders)).awaitSuccess()
+                val keyB64 = keyResponse.bodyString().trim()
 
                 streamUrl = decryptAES(encryptedDataB64, keyB64)
             } else {
                 val sUrl = "$baseUrl/ajax/stream?filecode=$mediaId"
-                val sResponse = client.newCall(GET(sUrl, Headers.Builder().add("Referer", url).build())).execute()
+                val sResponse = client.newCall(GET(sUrl, Headers.Builder().add("Referer", url).build())).awaitSuccess()
 
-                streamUrl = sResponse.body.string().parseAs<StreamupResponse>().streaming_url
+                streamUrl = sResponse.parseAs<StreamupResponse>().streaming_url
             }
         }
 
@@ -75,8 +80,8 @@ class StreamupExtractor(private val client: OkHttpClient) {
         return videos
     }
 
-    private fun decodePrintable95(encoded: String, shift: Int): String = try {
-        val bytes = encoded.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+    private fun decodePrintable95(encoded: String, shift: Int): String {
+        val bytes = encoded.decodeHex()
         val intermediate = String(bytes, Charsets.ISO_8859_1)
         val decoded = StringBuilder()
 
@@ -86,9 +91,7 @@ class StreamupExtractor(private val client: OkHttpClient) {
             if (i < 0) i += 95
             decoded.append((i + 32).toChar())
         }
-        decoded.toString()
-    } catch (e: Exception) {
-        ""
+        return decoded.toString()
     }
 
     private fun decryptAES(encryptedDataB64: String, keyB64: String): String? {

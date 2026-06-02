@@ -1,20 +1,15 @@
 package eu.kanade.tachiyomi.animeextension.pt.smartanimes.extractors
 
-import android.app.Application
-import android.os.Handler
-import android.os.Looper
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.network.GET
-import eu.kanade.tachiyomi.util.asJsoup
+import eu.kanade.tachiyomi.network.awaitSuccess
+import keiyoushi.utils.useAsJsoup
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
-import uy.kohesive.injekt.injectLazy
 
 class SendNowExtractor(private val client: OkHttpClient, private val headers: Headers) {
-    private val context: Application by injectLazy()
-    private val handler by lazy { Handler(Looper.getMainLooper()) }
-    fun videosFromUrl(url: String, name: String): List<Video> {
+    suspend fun videosFromUrl(url: String, name: String): List<Video> {
         // Client hints from: https://github.com/keiyoushi/extensions-source/blob/8f70beda06a70f84c79d793367fbdf6b9ea09b5a/src/pt/mangastop/src/eu/kanade/tachiyomi/extension/pt/mangastop/ClientHintsInterceptor.kt#L27
         val userAgent = headers["User-Agent"]
             ?: "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Mobile Safari/537.36"
@@ -55,7 +50,7 @@ class SendNowExtractor(private val client: OkHttpClient, private val headers: He
             set("User-Agent", userAgent)
         }.build()
 
-        val document = client.newCall(GET(url, newHeaders)).execute().asJsoup()
+        val document = client.newCall(GET(url, newHeaders)).awaitSuccess().useAsJsoup()
 
         val source = document.selectFirst("source") ?: return emptyList()
 

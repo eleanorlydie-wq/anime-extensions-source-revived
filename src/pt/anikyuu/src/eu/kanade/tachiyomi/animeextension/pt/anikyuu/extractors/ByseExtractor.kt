@@ -1,9 +1,12 @@
 package eu.kanade.tachiyomi.animeextension.pt.anikyuu.extractors
 
 import android.util.Base64
+import aniyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.animesource.model.Video
-import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.network.GET
+import eu.kanade.tachiyomi.network.awaitSuccess
+import keiyoushi.utils.bodyString
+import keiyoushi.utils.flatMapCatching
 import keiyoushi.utils.parseAs
 import kotlinx.serialization.Serializable
 import okhttp3.Headers
@@ -23,11 +26,12 @@ class ByseExtractor(
 ) {
 
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
-    fun videosFromUrl(url: String): List<Video> {
+
+    suspend fun videosFromUrl(url: String): List<Video> {
         val id = url.split("/")[4]
         val embedUrl =
             client.newCall(GET("https://${url.toHttpUrl().host}/api/videos/$id/embed/details"))
-                .execute().body.string()
+                .awaitSuccess().bodyString()
                 .substringAfter("embed_frame_url", "")
                 .substringAfter(":")
                 .substringAfter('"')
@@ -54,21 +58,21 @@ class ByseExtractor(
             set("Sec-Fetch-Storage-Access", "active")
         }.build()
 
-        return client.newCall(GET(playbackUrl, playbackHeader)).execute()
+        return client.newCall(GET(playbackUrl, playbackHeader)).awaitSuccess()
             .parseAs<PlaybackResponseDto>()
             .let { decrypt(it.playback) }
             .substringAfter("sources")
             .substringAfter("[")
             .substringBefore("]")
             .split("},")
-            .mapNotNull {
-                val videoUrl = it.substringAfter("\"url\":\"", "")
+            .flatMapCatching { entry ->
+                val videoUrl = entry.substringAfter("\"url\":\"", "")
                     .substringBefore('"')
                     .takeIf(String::isNotBlank)
                     ?.replace("\\u0026", "&")
-                    ?: return@mapNotNull null
+                    ?: return@flatMapCatching emptyList()
 
-                return playlistUtils.extractFromHls(
+                playlistUtils.extractFromHls(
                     videoUrl,
                     videoNameGen = { "Byse - $it" },
                 )
