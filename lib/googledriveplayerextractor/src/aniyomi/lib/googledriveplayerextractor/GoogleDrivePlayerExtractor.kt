@@ -1,7 +1,6 @@
 package aniyomi.lib.googledriveplayerextractor
 
 import android.annotation.SuppressLint
-import android.app.Application
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -13,12 +12,13 @@ import android.webkit.WebViewClient
 import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.network.GET
-import kotlinx.serialization.json.Json
+import keiyoushi.utils.applicationContext
+import keiyoushi.utils.bodyString
+import keiyoushi.utils.parseAs
 import okhttp3.Cookie
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
-import uy.kohesive.injekt.injectLazy
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
@@ -37,9 +37,7 @@ import java.util.concurrent.TimeUnit
  */
 class GoogleDrivePlayerExtractor(private val client: OkHttpClient, private val headers: Headers) {
     private val tag by lazy { javaClass.simpleName }
-    private val context: Application by injectLazy()
     private val handler by lazy { Handler(Looper.getMainLooper()) }
-    private val json: Json by injectLazy()
 
     /**
      * Extracts video URLs from a Google Drive URL.
@@ -51,6 +49,7 @@ class GoogleDrivePlayerExtractor(private val client: OkHttpClient, private val h
      * @return A list of [Video] objects with streaming URLs and quality information
      */
     @SuppressLint("SetJavaScriptEnabled")
+    @Synchronized
     fun videosFromUrl(origRequestUrl: String): List<Video> {
         Log.d(tag, "Fetching videos from: $origRequestUrl")
         val latch = CountDownLatch(1)
@@ -58,7 +57,7 @@ class GoogleDrivePlayerExtractor(private val client: OkHttpClient, private val h
         var playbackUrl: String? = null
 
         handler.post {
-            val newView = WebView(context)
+            val newView = WebView(applicationContext)
             webView = newView
             with(newView.settings) {
                 javaScriptEnabled = true
@@ -121,11 +120,11 @@ class GoogleDrivePlayerExtractor(private val client: OkHttpClient, private val h
         }.build()
 
         return try {
-            val response = client.newCall(GET(playbackUrlFinal, requestHeaders)).execute()
-            val responseBody = response.body.string()
+            val responseBody = client.newCall(GET(playbackUrlFinal, requestHeaders)).execute()
+                .bodyString()
             Log.d(tag, "Response body: ${responseBody.take(200)}...")
 
-            val streamingData = json.decodeFromString<GoogleDriveStreamingResponse>(responseBody)
+            val streamingData = responseBody.parseAs<GoogleDriveStreamingResponse>()
             val videos = mutableListOf<Video>()
 
             // Process progressive transcodes

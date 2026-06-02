@@ -4,14 +4,14 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.multisrc.dooplay.DooPlay
 import eu.kanade.tachiyomi.network.GET
-import eu.kanade.tachiyomi.util.asJsoup
+import eu.kanade.tachiyomi.network.awaitSuccess
+import keiyoushi.utils.bodyString
 import keiyoushi.utils.parallelCatchingFlatMapBlocking
-import kotlinx.serialization.json.Json
+import keiyoushi.utils.useAsJsoup
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
 import okhttp3.Response
 import org.jsoup.nodes.Element
-import uy.kohesive.injekt.injectLazy
 import java.text.SimpleDateFormat
 import java.util.Locale
 
@@ -23,9 +23,7 @@ class BetterAnimeIo :
     ) {
     private val contentUrl = "$baseUrl/animes"
 
-    private val json: Json by injectLazy()
-
-    private val extractor by lazy { BetterAnimeIoExtractor(client, json) }
+    private val extractor by lazy { BetterAnimeIoExtractor(client) }
 
     // ============================== Popular ===============================
     override fun popularAnimeSelector() = "div#featured-titles article.item div.poster"
@@ -75,12 +73,12 @@ class BetterAnimeIo :
 
     // ============================ Video Links =============================
     override fun videoListParse(response: Response): List<Video> {
-        val document = response.asJsoup()
+        val document = response.useAsJsoup()
         val players = document.select("ul#playeroptionsul li")
         return players.parallelCatchingFlatMapBlocking(::getPlayerVideos)
     }
 
-    private fun getPlayerVideos(player: Element): List<Video> {
+    private suspend fun getPlayerVideos(player: Element): List<Video> {
         val url = getPlayerUrl(player)
         if (url.isEmpty()) return emptyList()
 
@@ -93,20 +91,18 @@ class BetterAnimeIo :
         }
     }
 
-    private fun getPlayerUrl(player: Element): String {
+    private suspend fun getPlayerUrl(player: Element): String {
         val type = player.attr("data-type")
         val id = player.attr("data-post")
         val num = player.attr("data-nume")
         return try {
             client.newCall(GET("$baseUrl/wp-json/dooplayer/v2/$id/$type/$num", headers))
-                .execute()
-                .use { response ->
-                    response.body.string()
-                        .substringAfter("\"embed_url\":\"")
-                        .substringBefore("\",")
-                        .replace("\\", "")
-                }
-        } catch (e: Exception) {
+                .awaitSuccess()
+                .bodyString()
+                .substringAfter("\"embed_url\":\"")
+                .substringBefore("\",")
+                .replace("\\", "")
+        } catch (_: Exception) {
             ""
         }
     }

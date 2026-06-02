@@ -14,8 +14,10 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.multisrc.dooplay.DooPlay
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
-import eu.kanade.tachiyomi.util.asJsoup
+import eu.kanade.tachiyomi.network.awaitSuccess
+import keiyoushi.utils.bodyString
 import keiyoushi.utils.parallelCatchingFlatMapBlocking
+import keiyoushi.utils.useAsJsoup
 import okhttp3.FormBody
 import okhttp3.Request
 import okhttp3.Response
@@ -52,7 +54,7 @@ class DeTodoPeliculas :
 
 // ============================ Video Links =============================
     override fun videoListParse(response: Response): List<Video> {
-        val document = response.asJsoup()
+        val document = response.useAsJsoup()
         val referer = response.request.url.toString()
         val players = document.select("ul#playeroptionsul li")
         if (players.isEmpty()) return emptyList()
@@ -98,17 +100,13 @@ class DeTodoPeliculas :
                 .add("Origin", baseUrl)
                 .build()
 
-            val embedBody = runCatching {
-                client.newCall(GET(normalized, embedHeaders)).execute().use { response ->
-                    if (!response.isSuccessful) "" else response.body.string()
-                }
-            }.getOrDefault("")
+            val embedBody = client.newCall(GET(normalized, embedHeaders))
+                .awaitSuccess()
+                .useAsJsoup()
 
-            if (embedBody.isBlank()) return emptyList()
-
-            val iframeUrl = Jsoup.parse(embedBody)
+            val iframeUrl = embedBody
                 .selectFirst("iframe[src], iframe[data-src], iframe[data-lazy-src]")
-                ?.let { element ->
+                ?.let { element: Element ->
                     sequenceOf("src", "data-src", "data-lazy-src")
                         .map(element::attr)
                         .firstOrNull { it.isNotBlank() }
@@ -119,30 +117,26 @@ class DeTodoPeliculas :
 
             return extractVideos(iframeUrl, lang, referer, depth + 1)
         }
+
         val vidHideDomains = listOf("vidhide", "vidhidepro", "luluvdo", "vidhideplus")
 
-        return runCatching {
-            vidHideDomains.firstOrNull { normalized.contains(it, ignoreCase = true) }
-                ?.let { domain ->
-                    vidHideExtractor.videosFromUrl(
-                        normalized,
-                        videoNameGen = { "$lang - ${domain.uppercase()} : $it" },
-                    )
-                }
-                ?: when {
-                    "uqload" in normalized -> uqloadExtractor.videosFromUrl(normalized, "$lang - ")
-                    listOf("streamwish", "strwish", "wishembed").any { normalized.contains(it) } -> streamWishExtractor.videosFromUrl(normalized, "$lang - ")
-                    listOf("vidguard", "listeamed", "guard", "listeam").any { normalized.contains(it) } -> vidGuardExtractor.videosFromUrl(normalized, "$lang - ")
-                    "voe" in normalized -> voeExtractor.videosFromUrl(normalized, "$lang - ")
-                    else -> emptyList()
-                }
-        }.getOrElse {
-            it.printStackTrace()
-            emptyList()
-        }
+        return vidHideDomains.firstOrNull { normalized.contains(it, ignoreCase = true) }
+            ?.let { domain ->
+                vidHideExtractor.videosFromUrl(
+                    normalized,
+                    videoNameGen = { "$lang - ${domain.uppercase()} : $it" },
+                )
+            }
+            ?: when {
+                "uqload" in normalized -> uqloadExtractor.videosFromUrl(normalized, "$lang - ")
+                listOf("streamwish", "strwish", "wishembed").any { normalized.contains(it) } -> streamWishExtractor.videosFromUrl(normalized, "$lang - ")
+                listOf("vidguard", "listeamed", "guard", "listeam").any { normalized.contains(it) } -> vidGuardExtractor.videosFromUrl(normalized, "$lang - ")
+                "voe" in normalized -> voeExtractor.videosFromUrl(normalized, "$lang - ")
+                else -> emptyList()
+            }
     }
 
-    private fun getPlayerUrl(player: Element, referer: String): String? {
+    private suspend fun getPlayerUrl(player: Element, referer: String): String? {
         val directCandidate = sequenceOf(
             player.attr("data-option"),
             player.attr("data-player"),
@@ -175,9 +169,10 @@ class DeTodoPeliculas :
             .add("type", type)
             .build()
 
-        val responseBody = client.newCall(POST("$baseUrl/wp-admin/admin-ajax.php", ajaxHeaders, body)).execute().use { response ->
-            response.body.string()
-        }
+        val responseBody = client.newCall(POST("$baseUrl/wp-admin/admin-ajax.php", ajaxHeaders, body))
+            .awaitSuccess()
+            .bodyString()
+        val jsoupBody = Jsoup.parse(responseBody)
 
         if (responseBody.isBlank()) return null
 
@@ -187,8 +182,8 @@ class DeTodoPeliculas :
             ?.takeIf { it.isNotBlank() }
         if (embedByRegex != null) return embedByRegex
 
-        val iframe = Jsoup.parse(responseBody).selectFirst("iframe[src], iframe[data-src], iframe[data-lazy-src]")
-            ?.let { element ->
+        val iframe = jsoupBody.selectFirst("iframe[src], iframe[data-src], iframe[data-lazy-src]")
+            ?.let { element: Element ->
                 sequenceOf("src", "data-src", "data-lazy-src")
                     .map(element::attr)
                     .firstOrNull { it.isNotBlank() }
@@ -197,7 +192,7 @@ class DeTodoPeliculas :
             ?.takeIf { it.isNotBlank() }
         if (iframe != null) return iframe
 
-        val source = Jsoup.parse(responseBody).selectFirst("source[src]")?.attr("src")
+        val source = jsoupBody.selectFirst("source[src]")?.attr("src")
             ?.let(::normalizeUrl)
             ?.takeIf { it.isNotBlank() }
 
@@ -272,13 +267,6 @@ class DeTodoPeliculas :
             entryValues = PREF_LANG_VALUES
             setDefaultValue(PREF_LANG_DEFAULT)
             summary = "%s"
-
-            setOnPreferenceChangeListener { _, newValue ->
-                val selected = newValue as String
-                val index = findIndexOfValue(selected)
-                val entry = entryValues[index] as String
-                preferences.edit().putString(key, entry).commit()
-            }
         }
         ListPreference(screen.context).apply {
             key = PREF_SERVER_KEY
@@ -287,13 +275,6 @@ class DeTodoPeliculas :
             entryValues = SERVER_LIST
             setDefaultValue(PREF_SERVER_DEFAULT)
             summary = "%s"
-
-            setOnPreferenceChangeListener { _, newValue ->
-                val selected = newValue as String
-                val index = findIndexOfValue(selected)
-                val entry = entryValues[index] as String
-                preferences.edit().putString(key, entry).commit()
-            }
         }.also(screen::addPreference)
         screen.addPreference(langPref)
     }

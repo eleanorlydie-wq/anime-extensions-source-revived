@@ -7,8 +7,11 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
-import eu.kanade.tachiyomi.util.asJsoup
+import eu.kanade.tachiyomi.network.awaitSuccess
+import keiyoushi.utils.bodyString
+import keiyoushi.utils.parallelCatchingFlatMapBlocking
 import keiyoushi.utils.tryParse
+import keiyoushi.utils.useAsJsoup
 import okhttp3.Request
 import okhttp3.Response
 import org.json.JSONArray
@@ -32,7 +35,7 @@ class DattebayoBR : AnimeHttpSource() {
     override fun popularAnimeRequest(page: Int): Request = GET(baseUrl, headers)
 
     override fun popularAnimeParse(response: Response): AnimesPage {
-        val document = response.asJsoup()
+        val document = response.useAsJsoup()
 
         val animes = document
             .select("div.ultimosAnimesHomeItem")
@@ -69,7 +72,7 @@ class DattebayoBR : AnimeHttpSource() {
     ): Request = GET("$baseUrl/busca?busca=$query&page=$page", headers)
 
     override fun searchAnimeParse(response: Response): AnimesPage {
-        val document = response.asJsoup()
+        val document = response.useAsJsoup()
 
         val animes = document
             .select("div.ultimosAnimesHomeItem")
@@ -100,7 +103,7 @@ class DattebayoBR : AnimeHttpSource() {
 
     // Details
     override fun animeDetailsParse(response: Response): SAnime {
-        val document = response.asJsoup()
+        val document = response.useAsJsoup()
 
         return SAnime.create().apply {
             title = document.selectFirst(".tituloPage h1")
@@ -159,7 +162,7 @@ class DattebayoBR : AnimeHttpSource() {
                 episode_number = episodeNumber ?: 0f
                 date_upload = element.selectFirst(".lancaster_episodio_info_data")?.text().let(dateFormatter::tryParse)
             }
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             return null
         }
     }
@@ -182,8 +185,7 @@ class DattebayoBR : AnimeHttpSource() {
             }
 
             val responsePage = client.newCall(GET(pageUrl, headers)).execute()
-            val document = responsePage.asJsoup()
-            responsePage.close()
+            val document = responsePage.useAsJsoup()
 
             val pageEpisodes = document.select("div.ultimosEpisodiosHomeItem")
             if (pageEpisodes.isEmpty()) break
@@ -222,56 +224,50 @@ class DattebayoBR : AnimeHttpSource() {
 
     // Videos
     override fun videoListParse(response: Response): List<Video> {
-        val document = response.asJsoup()
-        val videos = mutableListOf<Video>()
+        val document = response.useAsJsoup()
         val episodeUrl = response.request.url.toString()
 
         // 1. Select only the tabs that exist in HTML. This prevents the code from attempting to process “id 2” if it does not exist in AbasBox.
         val activeAbas = document.select("div.AbasBox div.Aba")
 
-        activeAbas.forEach { aba ->
+        return activeAbas.parallelCatchingFlatMapBlocking { aba ->
             val abaType = aba.attr("aba-type")
-            val qualityName = aba.text().trim()
+            val qualityName = aba.text()
 
             // 2. Locate the player container corresponding to that tab.
-            val container = document.getElementById(abaType) ?: return@forEach
+            val container = document.getElementById(abaType) ?: return@parallelCatchingFlatMapBlocking emptyList()
 
             // 3. Extract the specific script from this container.
             val scriptData = container.selectFirst("script")?.data() ?: ""
             val vidRegex = """var vid\s*=\s*['"](.*?)['"]""".toRegex()
-            val urlQualidade = vidRegex.find(scriptData)?.groupValues?.get(1) ?: return@forEach
+            val urlQualidade = vidRegex.find(scriptData)?.groupValues?.get(1) ?: return@parallelCatchingFlatMapBlocking emptyList()
 
-            try {
-                val encodedUrl = java.net.URLEncoder.encode(urlQualidade, "UTF-8")
-                val adUrl = "https://ads.animeyabu.net?url=$encodedUrl"
+            val encodedUrl = java.net.URLEncoder.encode(urlQualidade, "UTF-8")
+            val adUrl = "https://ads.animeyabu.net?url=$encodedUrl"
 
-                val adHeaders = headersBuilder()
-                    .add("Referer", episodeUrl)
-                    .add("Origin", "https://www.dattebayo-br.com")
-                    .build()
+            val adHeaders = headersBuilder()
+                .add("Referer", episodeUrl)
+                .add("Origin", "https://www.dattebayo-br.com")
+                .build()
 
-                val adRequest = Request.Builder().url(adUrl).headers(adHeaders).build()
-                val adResponse = client.newCall(adRequest).execute()
-                val adBody = adResponse.body?.string() ?: ""
-                adResponse.close()
+            val adRequest = Request.Builder().url(adUrl).headers(adHeaders).build()
+            val adResponse = client.newCall(adRequest).awaitSuccess()
+            val adBody = adResponse.bodyString()
 
-                if (adBody.contains("publicidade")) {
-                    val jsonArray = JSONArray(adBody)
-                    if (jsonArray.length() > 0) {
-                        val obj = jsonArray.getJSONObject(0)
-                        val assinatura = obj.optString("publicidade", "")
+            if (adBody.contains("publicidade")) {
+                val jsonArray = JSONArray(adBody)
+                if (jsonArray.length() > 0) {
+                    val obj = jsonArray.getJSONObject(0)
+                    val assinatura = obj.optString("publicidade", "")
 
-                        if (assinatura.isNotBlank()) {
-                            val urlFinal = urlQualidade + assinatura
-                            videos.add(Video(urlFinal, qualityName, urlFinal, headers = adHeaders))
-                        }
+                    if (assinatura.isNotBlank()) {
+                        val urlFinal = urlQualidade + assinatura
+                        return@parallelCatchingFlatMapBlocking Video(urlFinal, qualityName, urlFinal, headers = adHeaders).let(::listOf)
                     }
                 }
-            } catch (e: Exception) {
-                // Silent log so as not to interrupt the search for other qualities.
             }
+            emptyList()
         }
-
-        return videos.sortedByDescending { it.quality }
+            .sortedByDescending { it.quality }
     }
 }

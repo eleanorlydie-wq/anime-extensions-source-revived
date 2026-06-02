@@ -17,16 +17,17 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.multisrc.dooplay.DooPlay
 import eu.kanade.tachiyomi.network.GET
-import eu.kanade.tachiyomi.util.asJsoup
+import eu.kanade.tachiyomi.network.awaitSuccess
 import keiyoushi.lib.cryptoaes.CryptoAES
+import keiyoushi.utils.bodyString
+import keiyoushi.utils.parallelCatchingFlatMap
 import keiyoushi.utils.parallelCatchingFlatMapBlocking
+import keiyoushi.utils.parseAs
 import keiyoushi.utils.tryParse
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
+import keiyoushi.utils.useAsJsoup
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -46,7 +47,6 @@ class SoloLatino :
         "SoloLatino",
         "https://sololatino.net",
     ) {
-    private val json by lazy { Json { ignoreUnknownKeys = true } }
 
     // ============================== Popular ===============================
     override fun popularAnimeRequest(page: Int) = GET("$baseUrl/tendencias/page/$page")
@@ -70,7 +70,7 @@ class SoloLatino :
     override fun popularAnimeNextPageSelector(): String = "div.pagMovidy a"
 
     override fun episodeListParse(response: Response): List<SEpisode> {
-        val doc = response.asJsoup()
+        val doc = response.useAsJsoup()
         val seasonList = doc.select("div#seasons div.se-c")
         return if (seasonList.isEmpty()) {
             SEpisode.create().apply {
@@ -119,7 +119,7 @@ class SoloLatino :
 
     // ============================ Video Links =============================
     override fun videoListParse(response: Response): List<Video> {
-        val path = response.request.url.toString()
+        val path = response.use { it.request.url.toString() }
         val links = mutableListOf<Pair<String, String>>()
 
         runBlocking {
@@ -146,16 +146,9 @@ class SoloLatino :
                 .findAll(result)
                 .toList()
 
-            coroutineScope {
-                val deferredResults = linkPages.map { matchResult ->
-                    async {
-                        processLinkPage(matchResult, path)
-                    }
-                }
-                deferredResults.awaitAll().forEach { newLinks ->
-                    links.addAll(newLinks)
-                }
-            }
+            linkPages.parallelCatchingFlatMap { matchResult ->
+                processLinkPage(matchResult, path)
+            }.let(links::addAll)
 
             if (links.isEmpty()) {
                 handleEmptyLinks(result, links, path)
@@ -167,7 +160,7 @@ class SoloLatino :
         }
     }
 
-    private fun processLinkPage(matchResult: MatchResult, path: String): List<Pair<String, String>> = try {
+    private suspend fun processLinkPage(matchResult: MatchResult, path: String): List<Pair<String, String>> = try {
         val postParams = mapOf(
             "action" to "doo_player_ajax",
             "post" to (matchResult.groups[2]?.value ?: ""),
@@ -183,7 +176,7 @@ class SoloLatino :
         emptyList()
     }
 
-    private fun handleEmptyLinks(result: String, links: MutableList<Pair<String, String>>, referer: String) {
+    private suspend fun handleEmptyLinks(result: String, links: MutableList<Pair<String, String>>, referer: String) {
         val iframeUrl = Regex("""pframe"><iframe class="[^"]+" src="([^"]+)""").find(result)?.groups?.get(1)?.value
         iframeUrl?.let { web ->
             val newResult = httpGet(web, referer)
@@ -195,18 +188,16 @@ class SoloLatino :
         }
     }
 
-    private fun httpGet(url: String, referer: String? = null): String {
+    private suspend fun httpGet(url: String, referer: String? = null): String {
         val headers = headersBuilder().apply {
             referer?.let { set("Referer", it) }
         }.build()
 
         val request = GET(url, headers)
-        return client.newCall(request).execute().use { response ->
-            response.body.string()
-        }
+        return client.newCall(request).awaitSuccess().bodyString()
     }
 
-    private fun httpPost(url: String, params: Map<String, String>, referer: String): String {
+    private suspend fun httpPost(url: String, params: Map<String, String>, referer: String): String {
         val formBody = FormBody.Builder().apply {
             params.forEach { (key, value) -> add(key, value) }
         }.build()
@@ -223,9 +214,7 @@ class SoloLatino :
             .post(formBody)
             .build()
 
-        return client.newCall(request).execute().use { response ->
-            response.body.string()
-        }
+        return client.newCall(request).awaitSuccess().bodyString()
     }
 
     private val uqloadExtractor by lazy { UqloadExtractor(client) }
@@ -350,7 +339,7 @@ class SoloLatino :
         val jsonPayload = resolveDataLink(rawExpression) ?: return null
 
         val items = runCatching {
-            json.decodeFromString<List<Item>>(jsonPayload)
+            jsonPayload.parseAs<List<Item>>()
         }.getOrElse {
             Log.e("SoloLatino", "No se pudo parsear dataLink", it)
             return null
@@ -395,7 +384,7 @@ class SoloLatino :
 
         return runCatching {
             val decoded = Base64.decode(payload, Base64.URL_SAFE or Base64.NO_WRAP)
-            val element = json.parseToJsonElement(String(decoded))
+            val element = String(decoded).parseAs<JsonElement>()
             val obj = element.jsonObject
 
             val link = obj["link"]?.jsonPrimitive?.contentOrNull
@@ -544,13 +533,6 @@ class SoloLatino :
             entryValues = SERVER_LIST
             setDefaultValue(PREF_SERVER_DEFAULT)
             summary = "%s"
-
-            setOnPreferenceChangeListener { _, newValue ->
-                val selected = newValue as String
-                val index = findIndexOfValue(selected)
-                val entry = entryValues[index] as String
-                preferences.edit().putString(key, entry).commit()
-            }
         }.also(screen::addPreference)
 
         val langPref = ListPreference(screen.context).apply {
@@ -560,13 +542,6 @@ class SoloLatino :
             entryValues = PREF_LANG_VALUES
             setDefaultValue(PREF_LANG_DEFAULT)
             summary = "%s"
-
-            setOnPreferenceChangeListener { _, newValue ->
-                val selected = newValue as String
-                val index = findIndexOfValue(selected)
-                val entry = entryValues[index] as String
-                preferences.edit().putString(key, entry).commit()
-            }
         }
         screen.addPreference(langPref)
     }

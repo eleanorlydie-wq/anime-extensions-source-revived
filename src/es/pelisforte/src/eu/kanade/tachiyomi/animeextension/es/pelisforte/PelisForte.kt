@@ -26,13 +26,14 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.awaitSuccess
-import eu.kanade.tachiyomi.util.asJsoup
 import keiyoushi.utils.getPreferencesLazy
 import keiyoushi.utils.parallelCatchingFlatMap
 import keiyoushi.utils.parallelCatchingFlatMapBlocking
+import keiyoushi.utils.useAsJsoup
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
 import okhttp3.Response
+import org.jsoup.nodes.Element
 import kotlin.text.ifEmpty
 import kotlin.text.lowercase
 
@@ -72,7 +73,7 @@ open class PelisForte :
     override fun popularAnimeRequest(page: Int) = GET("$baseUrl/todas-las-peliculas/page/$page", headers)
 
     override fun popularAnimeParse(response: Response): AnimesPage {
-        val document = response.asJsoup()
+        val document = response.useAsJsoup()
         val elements = document.select("#movies-a li[id*=post-]")
         val nextPage = document.select(".pagination .nav-links .current ~ a:not(.page-link)").any()
         val animeList = elements.map { element ->
@@ -85,7 +86,7 @@ open class PelisForte :
         return AnimesPage(animeList, nextPage)
     }
 
-    protected open fun org.jsoup.nodes.Element.getImageUrl(): String? = if (hasAttr("srcset")) {
+    protected open fun Element.getImageUrl(): String? = if (hasAttr("srcset")) {
         try {
             fetchUrls(attr("abs:srcset")).maxOrNull()
         } catch (_: Exception) {
@@ -113,7 +114,7 @@ open class PelisForte :
     override fun searchAnimeParse(response: Response) = popularAnimeParse(response)
 
     override fun animeDetailsParse(response: Response): SAnime {
-        val document = response.asJsoup()
+        val document = response.useAsJsoup()
         val animeDetails = SAnime.create().apply {
             title = document.selectFirst(".alg-cr .entry-header .entry-title")?.text() ?: ""
             description = document.select(".alg-cr .description").text()
@@ -148,7 +149,7 @@ open class PelisForte :
     }
 
     override fun videoListParse(response: Response): List<Video> {
-        val document = response.asJsoup()
+        val document = response.useAsJsoup()
         return document.select(".video-player iframe").parallelCatchingFlatMapBlocking { iframe ->
             val id = iframe.parent()?.attr("id")
             val idTab = document.selectFirst("[href=\"#$id\"]")?.closest(".lrt")?.attr("id")
@@ -174,7 +175,6 @@ open class PelisForte :
 
     /*--------------------------------Video extractors------------------------------------*/
     private val voeExtractor by lazy { VoeExtractor(client, headers) }
-    private val okruExtractor by lazy { OkruExtractor(client) }
     private val filemoonExtractor by lazy { FilemoonExtractor(client) }
     private val uqloadExtractor by lazy { UqloadExtractor(client) }
     private val mp4uploadExtractor by lazy { Mp4uploadExtractor(client) }
@@ -192,7 +192,7 @@ open class PelisForte :
         val newHeaders = headers.newBuilder().add("Referer", referer).build()
         return when (matched) {
             "voe" -> voeExtractor.videosFromUrl(url, "$prefix ")
-            "okru" -> okruExtractor.videosFromUrl(url, prefix, headers = newHeaders)
+            "okru" -> OkruExtractor(client, newHeaders).videosFromUrl(url, prefix)
             "filemoon" -> filemoonExtractor.videosFromUrl(url, prefix = "$prefix Filemoon:")
             "uqload" -> uqloadExtractor.videosFromUrl(url, prefix)
             "mp4upload" -> mp4uploadExtractor.videosFromUrl(url, newHeaders, prefix = "$prefix ")
@@ -284,13 +284,6 @@ open class PelisForte :
             entryValues = LANGUAGE_LIST
             setDefaultValue(PREF_LANGUAGE_DEFAULT)
             summary = "%s"
-
-            setOnPreferenceChangeListener { _, newValue ->
-                val selected = newValue as String
-                val index = findIndexOfValue(selected)
-                val entry = entryValues[index] as String
-                preferences.edit().putString(key, entry).commit()
-            }
         }.also(screen::addPreference)
 
         ListPreference(screen.context).apply {
@@ -300,13 +293,6 @@ open class PelisForte :
             entryValues = QUALITY_LIST
             setDefaultValue(PREF_QUALITY_DEFAULT)
             summary = "%s"
-
-            setOnPreferenceChangeListener { _, newValue ->
-                val selected = newValue as String
-                val index = findIndexOfValue(selected)
-                val entry = entryValues[index] as String
-                preferences.edit().putString(key, entry).commit()
-            }
         }.also(screen::addPreference)
 
         ListPreference(screen.context).apply {
@@ -316,13 +302,6 @@ open class PelisForte :
             entryValues = SERVER_LIST
             setDefaultValue(PREF_SERVER_DEFAULT)
             summary = "%s"
-
-            setOnPreferenceChangeListener { _, newValue ->
-                val selected = newValue as String
-                val index = findIndexOfValue(selected)
-                val entry = entryValues[index] as String
-                preferences.edit().putString(key, entry).commit()
-            }
         }.also(screen::addPreference)
     }
 }

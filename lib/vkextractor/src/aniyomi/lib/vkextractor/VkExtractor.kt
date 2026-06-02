@@ -3,12 +3,16 @@ package aniyomi.lib.vkextractor
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
+import eu.kanade.tachiyomi.network.await
+import eu.kanade.tachiyomi.network.awaitSuccess
+import keiyoushi.utils.bodyString
+import keiyoushi.utils.toHex
 import okhttp3.FormBody
 import okhttp3.Headers
 import okhttp3.OkHttpClient
 import java.security.MessageDigest
 
-class VkExtractor(private val client: OkHttpClient, private val headers: Headers) {
+class VkExtractor(private val client: OkHttpClient, headers: Headers) {
     // Credit: https://github.com/skoruppa/docchi-stremio-addon/blob/main/app/players/vk.py
     private val documentHeaders = headers.newBuilder()
         .add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
@@ -21,7 +25,7 @@ class VkExtractor(private val client: OkHttpClient, private val headers: Headers
         .add("Referer", "$VK_URL/")
         .build()
 
-    fun videosFromUrl(url: String, prefix: String = ""): List<Video> {
+    suspend fun videosFromUrl(url: String, prefix: String = ""): List<Video> {
         val videoId = extractVideoId(url) ?: return emptyList()
 
         val apiVideos = getVideosViaApi(videoId)
@@ -38,31 +42,38 @@ class VkExtractor(private val client: OkHttpClient, private val headers: Headers
             if (parts.size == 2) "$VK_URL/video_ext.php?oid=${parts[0]}&id=${parts[1]}&autoplay=0" else url
         }
 
-        val htmlContent = handleWafChallenge(embedUrl) ?: return emptyList()
+        val htmlContent = handleWafChallenge(embedUrl)
         return extractVideosFromHtml(htmlContent, prefix)
     }
 
-    private fun handleWafChallenge(url: String): String? {
-        val response = client.newCall(GET(url, documentHeaders)).execute()
+    private suspend fun handleWafChallenge(url: String): String {
+        val response = client.newCall(GET(url, documentHeaders)).await()
         val responseUrl = response.request.url.toString()
 
         if (responseUrl.contains("429.html") || response.code == 429) {
+            response.close()
             val cookies = client.cookieJar.loadForRequest(response.request.url)
-            val hash429Cookie = cookies.find { it.name == "hash429" }?.value
+            val hash429Cookie = cookies.firstOrNull { it.name == "hash429" }?.value
 
             if (hash429Cookie != null) {
                 val hash429 = md5(hash429Cookie)
-                val challengeUrl = "$responseUrl&key=$hash429"
+                val challengeUrl = response.request.url.newBuilder()
+                    .addQueryParameter("key", hash429)
+                    .build()
+                    .toString()
 
-                client.newCall(GET(challengeUrl, documentHeaders)).execute()
+                client.newCall(GET(challengeUrl, documentHeaders)).awaitSuccess().close()
 
-                return client.newCall(GET(url, documentHeaders)).execute().body.string()
+                return client.newCall(GET(url, documentHeaders)).awaitSuccess().bodyString()
+            } else {
+                throw Exception("hash429 cookie not found, cannot bypass WAF")
             }
+        } else {
+            return response.bodyString()
         }
-        return response.body.string()
     }
 
-    private fun getVideosViaApi(videoId: String): List<RawVideo> {
+    private suspend fun getVideosViaApi(videoId: String): List<RawVideo> {
         val body = FormBody.Builder()
             .add("act", "show")
             .add("al", "1")
@@ -75,11 +86,12 @@ class VkExtractor(private val client: OkHttpClient, private val headers: Headers
             .build()
 
         return try {
-            val response = client.newCall(POST(VK_API_URL, apiHeaders, body)).execute().body.string()
-            val cleanJson = response.substringAfter("<!--")
+            val cleanJson = client.newCall(POST(VK_API_URL, apiHeaders, body)).awaitSuccess()
+                .bodyString()
+                .substringAfter("<!--")
 
             parseVideoUrls(cleanJson)
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             emptyList()
         }
     }
@@ -111,7 +123,9 @@ class VkExtractor(private val client: OkHttpClient, private val headers: Headers
 //            videos.add(RawVideo(url, "HLS"))
 //        }
 
-        return videos.distinctBy { it.quality }.sortedByDescending { it.quality }
+        return videos
+            .distinctBy { it.quality }
+            .sortedByDescending { it.quality.removeSuffix("p").toIntOrNull() ?: 0 }
     }
 
     private fun extractVideoId(url: String): String? {
@@ -134,7 +148,7 @@ class VkExtractor(private val client: OkHttpClient, private val headers: Headers
 
     private fun md5(input: String): String {
         val md = MessageDigest.getInstance("MD5")
-        return md.digest(input.toByteArray()).joinToString("") { "%02x".format(it) }
+        return md.digest(input.toByteArray()).toHex()
     }
 
     data class RawVideo(val url: String, val quality: String)

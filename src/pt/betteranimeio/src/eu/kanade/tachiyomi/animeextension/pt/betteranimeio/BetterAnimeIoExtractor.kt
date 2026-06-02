@@ -2,19 +2,18 @@ package eu.kanade.tachiyomi.animeextension.pt.betteranimeio
 
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.network.GET
-import kotlinx.serialization.json.Json
+import eu.kanade.tachiyomi.network.awaitSuccess
+import keiyoushi.utils.parseAs
 import okhttp3.OkHttpClient
 
 class BetterAnimeIoExtractor(
     private val client: OkHttpClient,
-    private val json: Json,
 ) {
-    fun extractVideosFromApi(encodedSource: String): List<Video> {
+    suspend fun extractVideosFromApi(encodedSource: String): List<Video> {
         val apiUrl = "$API_URL$encodedSource"
         return try {
-            val response = client.newCall(GET(apiUrl)).execute()
-            val responseBody = response.body.string()
-            val videoResponse = json.decodeFromString<VideoApiResponse>(responseBody)
+            val videoResponse = client.newCall(GET(apiUrl)).awaitSuccess()
+                .parseAs<VideoApiResponse>()
 
             if (videoResponse.status == "success") {
                 videoResponse.play.map { video ->
@@ -23,7 +22,7 @@ class BetterAnimeIoExtractor(
             } else {
                 emptyList()
             }
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             emptyList()
         }
     }

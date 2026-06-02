@@ -77,7 +77,7 @@ class AsiaLiveAction :
         val anime = SAnime.create()
         val link = element.selectFirst("a")!!
         anime.setUrlWithoutDomain(link.attr("href"))
-        anime.title = element.selectFirst("h5, h4, h3.Title, a.Title, span.Title")?.text()?.trim().orEmpty()
+        anime.title = element.selectFirst("h5, h4, h3.Title, a.Title, span.Title")!!.text()
         val image = element.selectFirst("img")
         anime.thumbnail_url = image?.imageUrl()
         return anime
@@ -88,9 +88,9 @@ class AsiaLiveAction :
     override fun animeDetailsParse(document: Document): SAnime = SAnime.create().apply {
         thumbnail_url = document.selectFirst("div.Poster")?.attr("style")?.extractBackgroundUrl()
             ?: document.selectFirst("figure img")?.attr("abs:src")?.getHdImg()
-        title = document.selectFirst("h2.Title, h1.Title")?.text()?.trim().orEmpty()
+        document.selectFirst("h2.Title, h1.Title")?.text()?.let { title = it }
         val descriptionText = document.select("section article > p")
-            .joinToString("\n\n") { it.text().trim() }
+            .joinToString("\n\n") { it.text() }
         description = descriptionText.takeIf { it.isNotBlank() }
         val genreText = document.select("footer a.tag").joinToString { it.text() }
         genre = genreText.takeIf { it.isNotBlank() }
@@ -341,13 +341,6 @@ class AsiaLiveAction :
             entryValues = QUALITY_LIST
             setDefaultValue(PREF_QUALITY_DEFAULT)
             summary = "%s"
-
-            setOnPreferenceChangeListener { _, newValue ->
-                val selected = newValue as String
-                val index = findIndexOfValue(selected)
-                val entry = entryValues[index] as String
-                preferences.edit().putString(key, entry).commit()
-            }
         }.also(screen::addPreference)
 
         ListPreference(screen.context).apply {
@@ -357,13 +350,6 @@ class AsiaLiveAction :
             entryValues = SERVER_LIST
             setDefaultValue(PREF_SERVER_DEFAULT)
             summary = "%s"
-
-            setOnPreferenceChangeListener { _, newValue ->
-                val selected = newValue as String
-                val index = findIndexOfValue(selected)
-                val entry = entryValues[index] as String
-                preferences.edit().putString(key, entry).commit()
-            }
         }.also(screen::addPreference)
     }
 }

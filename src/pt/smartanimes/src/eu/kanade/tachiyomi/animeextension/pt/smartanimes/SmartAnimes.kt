@@ -4,8 +4,8 @@ import eu.kanade.tachiyomi.animeextension.pt.smartanimes.extractors.SmartAnimesE
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.multisrc.animestream.AnimeStream
-import eu.kanade.tachiyomi.util.asJsoup
 import keiyoushi.utils.parallelCatchingFlatMapBlocking
+import keiyoushi.utils.useAsJsoup
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Response
 
@@ -27,7 +27,7 @@ class SmartAnimes :
     override fun videoListSelector() = ".dlbox li:not(.head)"
 
     override fun videoListParse(response: Response): List<Video> {
-        val items = response.asJsoup().select(videoListSelector())
+        val items = response.useAsJsoup().select(videoListSelector())
 
         return items.parallelCatchingFlatMapBlocking { element ->
             val name = element.selectFirst(".q")!!.text().trim()

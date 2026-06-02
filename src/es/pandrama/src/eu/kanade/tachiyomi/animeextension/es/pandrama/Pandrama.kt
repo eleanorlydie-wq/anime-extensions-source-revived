@@ -13,16 +13,16 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
-import eu.kanade.tachiyomi.util.asJsoup
+import eu.kanade.tachiyomi.network.awaitSuccess
 import keiyoushi.utils.getPreferencesLazy
-import keiyoushi.utils.parallelCatchingFlatMapBlocking
+import keiyoushi.utils.parallelCatchingFlatMap
+import keiyoushi.utils.parseAs
+import keiyoushi.utils.toJsonString
+import keiyoushi.utils.useAsJsoup
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
 import okhttp3.Request
 import okhttp3.Response
-import uy.kohesive.injekt.injectLazy
 import java.net.URLDecoder
 
 class Pandrama :
@@ -39,8 +39,6 @@ class Pandrama :
 
     private val preferences by getPreferencesLazy()
 
-    private val json: Json by injectLazy()
-
     companion object {
         private const val PREF_QUALITY_KEY = "preferred_quality"
         private const val PREF_QUALITY_DEFAULT = "1080"
@@ -52,7 +50,7 @@ class Pandrama :
     }
 
     override fun animeDetailsParse(response: Response): SAnime {
-        val document = response.asJsoup()
+        val document = response.useAsJsoup()
         val details = SAnime.create().apply {
             status = SAnime.UNKNOWN
             description = document.selectFirst("#height_limit")?.ownText()
@@ -71,7 +69,7 @@ class Pandrama :
     override fun popularAnimeRequest(page: Int) = GET("$baseUrl/explorar/Dramas--------$page---/", headers)
 
     override fun popularAnimeParse(response: Response): AnimesPage {
-        val document = response.asJsoup()
+        val document = response.useAsJsoup()
         val elements = document.select("a.public-list-exp")
         val nextPage = document.select("[title=\"Página siguiente\"]").any()
         val animeList = elements.map { element ->
@@ -149,25 +147,25 @@ class Pandrama :
         )
 
     override fun episodeListParse(response: Response): List<SEpisode> {
-        val document = response.asJsoup()
+        val document = response.useAsJsoup()
         return document.select(".anthology-list-play li a").groupBy { it.text().trim() }.map {
-            val urlList = json.encodeToString(it.value.map { it.attr("abs:href") })
+            val urlList = it.value.map { it.attr("abs:href") }.toJsonString()
             SEpisode.create().apply {
                 name = "Episodio ${it.key.substringAfter("Ep.").trim()}"
-                episode_number = it.key.trim().toFloatOrNull() ?: 0F
+                episode_number = it.key.substringAfter("Ep.").trim().toFloatOrNull() ?: 0F
                 url = urlList
             }
         }.reversed()
     }
 
     override suspend fun getVideoList(episode: SEpisode): List<Video> {
-        val serverData = json.decodeFromString<List<String>>(episode.url)
-        return serverData.parallelCatchingFlatMapBlocking {
-            val page = client.newCall(GET(it)).execute().asJsoup()
+        val serverData = episode.url.parseAs<List<String>>()
+        return serverData.parallelCatchingFlatMap {
+            val page = client.newCall(GET(it)).awaitSuccess().useAsJsoup()
             val jsonData = page.selectFirst("script:containsData(var player_aaaa)")
                 ?.data()?.substringAfter("var player_aaaa=")?.trim()
-                ?: return@parallelCatchingFlatMapBlocking emptyList()
-            val player = json.decodeFromString<PlayerDto>(jsonData)
+                ?: return@parallelCatchingFlatMap emptyList()
+            val player = jsonData.parseAs<PlayerDto>()
             val url = if (player.encrypt == 2) {
                 URLDecoder.decode(base64decode(player.url ?: ""), "UTF-8")
             } else {
@@ -209,13 +207,6 @@ class Pandrama :
             entryValues = SERVER_LIST
             setDefaultValue(PREF_SERVER_DEFAULT)
             summary = "%d"
-
-            setOnPreferenceChangeListener { _, newValue ->
-                val selected = newValue as String
-                val index = findIndexOfValue(selected)
-                val entry = entryValues[index] as String
-                preferences.edit().putString(key, entry).commit()
-            }
         }.also(screen::addPreference)
 
         ListPreference(screen.context).apply {
@@ -225,13 +216,6 @@ class Pandrama :
             entryValues = QUALITY_LIST
             setDefaultValue(PREF_QUALITY_DEFAULT)
             summary = "%d"
-
-            setOnPreferenceChangeListener { _, newValue ->
-                val selected = newValue as String
-                val index = findIndexOfValue(selected)
-                val entry = entryValues[index] as String
-                preferences.edit().putString(key, entry).commit()
-            }
         }.also(screen::addPreference)
     }
 

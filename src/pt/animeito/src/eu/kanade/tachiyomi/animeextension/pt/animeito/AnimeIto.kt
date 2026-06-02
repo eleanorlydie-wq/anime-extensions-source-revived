@@ -20,14 +20,15 @@ class AnimeIto :
 
     override fun videoListSelector() = "ul.tabs_videos li"
 
-    override fun getHosterUrl(element: Element): String {
+    override suspend fun getHosterUrl(element: Element): String {
         val encodedData = element.attr("value")
 
         return getHosterUrl(encodedData)
     }
 
     private val animeitoExtractor by lazy { AnimeItoExtractor(client, headers) }
-    override fun getVideoList(url: String, name: String): List<Video> = when {
+
+    override suspend fun getVideoList(url: String, name: String): List<Video> = when {
         "anidrive.click" in url -> animeitoExtractor.videosFromUrl(url)
         else -> emptyList()
     }

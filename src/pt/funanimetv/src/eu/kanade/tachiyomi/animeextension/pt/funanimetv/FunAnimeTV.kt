@@ -1,6 +1,5 @@
 package eu.kanade.tachiyomi.animeextension.pt.funanimetv
 
-import android.app.Application
 import android.util.Base64
 import androidx.preference.ListPreference
 import androidx.preference.PreferenceScreen
@@ -18,9 +17,10 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.network.interceptor.rateLimit
+import keiyoushi.utils.getPreferencesLazy
 import keiyoushi.utils.parseAs
+import keiyoushi.utils.toJsonString
 import kotlinx.coroutines.runBlocking
-import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -29,9 +29,6 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
 import okhttp3.RequestBody
 import okhttp3.Response
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
-import uy.kohesive.injekt.injectLazy
 import java.security.MessageDigest
 import kotlin.time.Duration.Companion.seconds
 
@@ -51,11 +48,7 @@ class FunAnimeTV :
 
     override val supportsLatest = true
 
-    private val preferences by lazy {
-        Injekt.get<Application>().getSharedPreferences("source_$id", 0x0000)
-    }
-
-    private val json: Json by injectLazy()
+    private val preferences by getPreferencesLazy()
 
     override fun headersBuilder() = super.headersBuilder().apply {
         set("User-Agent", "Dalvik/2.1.0 (Linux; U; Android 16; M2007J20CG Build/BP3A.250905.014)")
@@ -213,8 +206,7 @@ class FunAnimeTV :
 
             val request = POST(apiUrl, headers, form)
 
-            val data = client
-                .newCall(request)
+            val data = client.newCall(request)
                 .execute()
                 .getByArrayKey<List<SingleVideoItemDto>>()
                 .first()
@@ -311,13 +303,6 @@ class FunAnimeTV :
             entryValues = PREF_QUALITY_ENTRIES
             setDefaultValue(PREF_QUALITY_DEFAULT)
             summary = "%s"
-
-            setOnPreferenceChangeListener { _, newValue ->
-                val selected = newValue as String
-                val index = findIndexOfValue(selected)
-                val entry = entryValues[index] as String
-                preferences.edit().putString(key, entry).commit()
-            }
         }.also(screen::addPreference)
 
         ListPreference(screen.context).apply {
@@ -327,13 +312,6 @@ class FunAnimeTV :
             entryValues = PREF_LANGUAGE_VALUES
             setDefaultValue(PREF_LANGUAGE_DEFAULT)
             summary = "%s"
-
-            setOnPreferenceChangeListener { _, newValue ->
-                val selected = newValue as String
-                val index = findIndexOfValue(selected)
-                val entry = entryValues[index] as String
-                preferences.edit().putString(key, entry).commit()
-            }
         }.also(screen::addPreference)
     }
 
@@ -383,7 +361,7 @@ class FunAnimeTV :
             }
         }
 
-        val jsonString = json.encodeToString(JsonObject.serializer(), jsonObject)
+        val jsonString = jsonObject.toJsonString()
 
         val base64Data = Base64.encodeToString(
             jsonString.toByteArray(Charsets.UTF_8),
@@ -410,8 +388,7 @@ class FunAnimeTV :
 
         val request = POST("$baseUrl/valid_g.php", headers, form)
 
-        val appDetails = client
-            .newCall(request)
+        val appDetails = client.newCall(request)
             .execute()
             .getByArrayKey<List<GetAppDetailsResponse>>(NAME_INIT)
             .first()

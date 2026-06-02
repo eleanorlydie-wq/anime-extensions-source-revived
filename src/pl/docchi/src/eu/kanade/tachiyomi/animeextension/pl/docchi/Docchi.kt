@@ -21,16 +21,14 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
-import eu.kanade.tachiyomi.util.asJsoup
 import keiyoushi.utils.getPreferencesLazy
 import keiyoushi.utils.parallelCatchingFlatMapBlocking
 import keiyoushi.utils.parseAs
 import keiyoushi.utils.tryParse
+import keiyoushi.utils.useAsJsoup
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
 import okhttp3.Request
 import okhttp3.Response
-import uy.kohesive.injekt.injectLazy
 import java.text.SimpleDateFormat
 import java.util.Locale
 
@@ -47,8 +45,6 @@ class Docchi :
     override val lang = "pl"
 
     override val supportsLatest = true
-
-    private val json: Json by injectLazy()
 
     private val preferences by getPreferencesLazy()
 
@@ -81,7 +77,7 @@ class Docchi :
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request = GET("$baseApiUrl/v1/series/related/$query")
 
     override fun searchAnimeParse(response: Response): AnimesPage {
-        val animeArray: List<ApiSearch> = response.body.string().parseAs()
+        val animeArray = response.parseAs<List<ApiSearch>>()
         val entries = animeArray.map { animeDetail ->
             SAnime.create().apply {
                 title = animeDetail.title
@@ -96,7 +92,7 @@ class Docchi :
     override fun episodeListRequest(anime: SAnime): Request = GET("$baseApiUrl/v1/episodes/count/${anime.url.substringAfterLast("/")}")
 
     override fun episodeListParse(response: Response): List<SEpisode> {
-        val episodeList: List<EpisodeList> = response.body.string().parseAs()
+        val episodeList = response.parseAs<List<EpisodeList>>()
         return episodeList.map { episode ->
             SEpisode.create().apply {
                 name = "${episode.anime_episode_number.toInt()} Odcinek"
@@ -113,11 +109,11 @@ class Docchi :
     // override fun animeDetailsRequest(anime: SAnime): Request = GET("$baseApiUrl/v1/series/find/${anime.url.substringAfterLast("/")}")
 
     override fun animeDetailsParse(response: Response): SAnime {
-        val documentDocchi = client.newCall(
-            GET("$baseApiUrl/v1/series/find/${response.asJsoup().location().substringAfterLast("/")}"),
+        val location = response.useAsJsoup().location().substringAfterLast("/")
+        val animeDetail = client.newCall(
+            GET("$baseApiUrl/v1/series/find/$location"),
         ).execute()
-
-        val animeDetail = documentDocchi.body.string().parseAs<ApiDetail>()
+            .parseAs<ApiDetail>()
         val myanimeListDetail = myanimelistApi(animeDetail.mal_id)
 
         return SAnime.create().apply {
@@ -150,7 +146,7 @@ class Docchi :
     private val filemoonExtractor by lazy { FilemoonExtractor(client) }
 
     override fun videoListParse(response: Response): List<Video> {
-        val videolist: List<VideoList> = response.body.string().parseAs()
+        val videolist = response.parseAs<List<VideoList>>()
         val serverList = videolist.mapNotNull { player ->
             val sub = player.translator_title.uppercase()
 
@@ -250,10 +246,10 @@ class Docchi :
     }
 
     private fun myanimelistApi(id: Int): MyAnimeListResponse {
-        val document = client.newCall(
+        val response = client.newCall(
             GET("https://api.jikan.moe/v4/anime/$id"),
         ).execute()
-        return document.body.string().parseAs<MyAnimeListResponse>()
+        return response.parseAs<MyAnimeListResponse>()
     }
 
     private val dateFormat by lazy { SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.getDefault()) }
@@ -272,13 +268,6 @@ class Docchi :
             entryValues = arrayOf("1080", "720", "480", "360")
             setDefaultValue("1080")
             summary = "%s"
-
-            setOnPreferenceChangeListener { _, newValue ->
-                val selected = newValue as String
-                val index = findIndexOfValue(selected)
-                val entry = entryValues[index] as String
-                preferences.edit().putString(key, entry).commit()
-            }
         }
         val videoServerPref = ListPreference(screen.context).apply {
             key = "preferred_server"
@@ -287,13 +276,6 @@ class Docchi :
             entryValues = arrayOf("cda.pl", "Dailymotion", "Mp4upload", "Sibnet", "vk.com")
             setDefaultValue("cda.pl")
             summary = "%s"
-
-            setOnPreferenceChangeListener { _, newValue ->
-                val selected = newValue as String
-                val index = findIndexOfValue(selected)
-                val entry = entryValues[index] as String
-                preferences.edit().putString(key, entry).commit()
-            }
         }
 
         screen.addPreference(videoQualityPref)

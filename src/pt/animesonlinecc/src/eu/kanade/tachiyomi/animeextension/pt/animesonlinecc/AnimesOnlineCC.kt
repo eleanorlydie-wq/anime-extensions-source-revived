@@ -7,8 +7,8 @@ import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.multisrc.dooplay.DooPlay
 import eu.kanade.tachiyomi.network.GET
-import eu.kanade.tachiyomi.util.asJsoup
 import keiyoushi.utils.parallelCatchingFlatMapBlocking
+import keiyoushi.utils.useAsJsoup
 import okhttp3.Response
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
@@ -57,7 +57,7 @@ class AnimesOnlineCC :
 
     // ============================ Video Links =============================
     override fun videoListParse(response: Response): List<Video> {
-        val document = response.asJsoup()
+        val document = response.useAsJsoup()
         val players = document.select("#playex iframe")
         return players.parallelCatchingFlatMapBlocking(::getPlayerVideos)
     }
@@ -67,11 +67,11 @@ class AnimesOnlineCC :
 
     private val bloggerExtractor by lazy { BloggerExtractor(client) }
 
-    private fun getPlayerVideos(player: Element): List<Video> {
+    private suspend fun getPlayerVideos(player: Element): List<Video> {
         val url = player.attr("src")
 
         val id = player.parent()!!.attr("id")
-        var language =
+        val language =
             player.ownerDocument()!!
                 .selectFirst("a.options[href=\"#$id\"]")
                 ?.text()
@@ -98,12 +98,6 @@ class AnimesOnlineCC :
             entryValues = PREF_LANGUAGE_VALUES
             setDefaultValue(PREF_LANGUAGE_DEFAULT)
             summary = "%s"
-            setOnPreferenceChangeListener { _, newValue ->
-                val selected = newValue as String
-                val index = findIndexOfValue(selected)
-                val entry = entryValues[index] as String
-                preferences.edit().putString(key, entry).commit()
-            }
         }
 
         screen.addPreference(videoLanguagePref)

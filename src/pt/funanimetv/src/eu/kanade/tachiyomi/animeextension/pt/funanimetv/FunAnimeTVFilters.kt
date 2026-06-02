@@ -14,7 +14,7 @@ object FunAnimeTVFilters {
         fun toQueryPart() = vals[state].second
     }
 
-    open class CheckBoxFilterList(name: String, val pairs: Array<Pair<String, String>>) : AnimeFilter.Group<AnimeFilter.CheckBox>(name, pairs.map { CheckBoxVal(it.first, false) })
+    open class CheckBoxFilterList(name: String, pairs: Array<Pair<String, String>>) : AnimeFilter.Group<AnimeFilter.CheckBox>(name, pairs.map { CheckBoxVal(it.first, false) })
 
     private class CheckBoxVal(name: String, state: Boolean = false) : AnimeFilter.CheckBox(name, state)
 
@@ -51,26 +51,26 @@ object FunAnimeTVFilters {
     }
 
     private object FunAnimeTVFiltersData {
-        private val SELECT = Pair("<Selecione>", "")
+        private val SELECT = "<Selecione>" to ""
 
         val GENRES_LIST = arrayOf(
-            Pair("", "Todos"),
-            Pair("aventura", "Aventura"),
-            Pair("ação", "Ação"),
-            Pair("comédia", "Comédia"),
-            Pair("drama", "Drama"),
-            Pair("ecchi", "Ecchi"),
-            Pair("esportes", "Esportes"),
-            Pair("fantasia", "Fantasia"),
-            Pair("mecha", "Mecha"),
-            Pair("mistério", "Mistério"),
-            Pair("música", "Música"),
-            Pair("romance", "Romance"),
-            Pair("sci-fi", "Sci-Fi"),
-            Pair("shoujo", "Shoujo"),
-            Pair("shounen", "Shounen"),
-            Pair("slice of life", "Slice of Life"),
-            Pair("sobrenatural", "Sobrenatural"),
+            SELECT,
+            "Aventura" to "aventura",
+            "Ação" to "ação",
+            "Comédia" to "comédia",
+            "Drama" to "drama",
+            "Ecchi" to "ecchi",
+            "Esportes" to "esportes",
+            "Fantasia" to "fantasia",
+            "Mecha" to "mecha",
+            "Mistério" to "mistério",
+            "Música" to "música",
+            "Romance" to "romance",
+            "Sci-Fi" to "sci-fi",
+            "Shoujo" to "shoujo",
+            "Shounen" to "shounen",
+            "Slice of Life" to "slice of life",
+            "Sobrenatural" to "sobrenatural",
         )
     }
 }

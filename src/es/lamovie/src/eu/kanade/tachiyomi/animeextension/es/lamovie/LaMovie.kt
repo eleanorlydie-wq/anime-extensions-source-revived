@@ -1,7 +1,5 @@
 package eu.kanade.tachiyomi.animeextension.es.lamovie
 
-import android.app.Application
-import android.content.SharedPreferences
 import androidx.preference.ListPreference
 import androidx.preference.PreferenceScreen
 import aniyomi.lib.doodextractor.DoodExtractor
@@ -12,6 +10,7 @@ import aniyomi.lib.streamwishextractor.StreamWishExtractor
 import aniyomi.lib.vidhideextractor.VidHideExtractor
 import aniyomi.lib.voeextractor.VoeExtractor
 import aniyomi.lib.youruploadextractor.YourUploadExtractor
+import eu.kanade.tachiyomi.animeextension.BuildConfig
 import eu.kanade.tachiyomi.animeextension.es.lamovie.extractors.LaMovieEmbedExtractor
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
@@ -20,10 +19,11 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.multisrc.dopeflix.DopeFlix
 import eu.kanade.tachiyomi.network.GET
+import keiyoushi.utils.bodyString
+import keiyoushi.utils.parallelCatchingFlatMapBlocking
+import keiyoushi.utils.parseAs
+import keiyoushi.utils.toJsonString
 import keiyoushi.utils.tryParse
-import kotlinx.serialization.KSerializer
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -37,8 +37,6 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Request
 import okhttp3.Response
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
 import java.text.SimpleDateFormat
 import java.util.Locale
 import java.util.TimeZone
@@ -54,7 +52,6 @@ class LaMovie :
     ) {
     override val id: Long = 5419283741928374105
 
-    private val json by lazy { Json { ignoreUnknownKeys = true } }
     private val doodExtractor by lazy { DoodExtractor(client) }
     private val voeExtractor by lazy { VoeExtractor(client, headers) }
     private val mp4uploadExtractor by lazy { Mp4uploadExtractor(client) }
@@ -64,10 +61,6 @@ class LaMovie :
     private val filemoonExtractor by lazy { FilemoonExtractor(client) }
     private val goodStreamExtractor by lazy { GoodStreamExtractor(client, headers) }
     private val lamovieEmbedExtractor by lazy { LaMovieEmbedExtractor(client, headers) }
-
-    private val preferences: SharedPreferences by lazy {
-        Injekt.get<Application>().getSharedPreferences("source_$id", 0x0000)
-    }
 
     // ============================== Popular ===============================
     override fun popularAnimeRequest(page: Int): Request {
@@ -140,7 +133,7 @@ class LaMovie :
 
         if (payload.isEmpty()) return null
 
-        return json.encodeToString(JsonObject(payload))
+        return JsonObject(payload).toJsonString()
     }
 
     // =========================== Anime Details ============================
@@ -157,7 +150,7 @@ class LaMovie :
     }
 
     override fun animeDetailsParse(response: Response): SAnime {
-        val data = response.parseData(PostDto.serializer())
+        val data = response.parseData<PostDto>()
         return data.toSAnime()
     }
 
@@ -165,7 +158,7 @@ class LaMovie :
     override fun episodeListRequest(anime: SAnime): Request = animeDetailsRequest(anime)
 
     override fun episodeListParse(response: Response): List<SEpisode> {
-        val data = response.parseData(PostDto.serializer())
+        val data = response.parseData<PostDto>()
         val context = AnimeContext(
             type = data.postType,
             slug = data.slug.ifBlank { data.id.toString() },
@@ -198,7 +191,7 @@ class LaMovie :
     }
 
     override fun videoListParse(response: Response): List<Video> {
-        val data = response.parseData(PlayerDataDto.serializer())
+        val data = response.parseData<PlayerDataDto>()
 
         val embeds = data.parseEmbeds()
         if (embeds.isEmpty()) return emptyList()
@@ -216,16 +209,16 @@ class LaMovie :
             )
         }
 
-        return prioritizedEmbeds.flatMap(::resolveEmbedVideos)
+        return prioritizedEmbeds.parallelCatchingFlatMapBlocking(::resolveEmbedVideos)
     }
 
-    private fun resolveEmbedVideos(embed: EmbedItem): List<Video> = runCatching {
+    private suspend fun resolveEmbedVideos(embed: EmbedItem): List<Video> {
         val prefix = buildString {
             embed.language?.takeIf(String::isNotBlank)?.let { append("${it.uppercase(Locale.US)} | ") }
             embed.quality?.takeIf(String::isNotBlank)?.let { append(" - $it") }
         }
 
-        when (embed.serverKey()) {
+        return when (embed.serverKey()) {
             SERVER_KEY_DOOD -> doodExtractor.videosFromUrl(embed.url, "$prefix - Doodstream")
             SERVER_KEY_VOE -> voeExtractor.videosFromUrl(embed.url, "$prefix - Voe")
             SERVER_KEY_MP4UPLOAD -> mp4uploadExtractor.videosFromUrl(embed.url, headers, "$prefix - Mp4upload")
@@ -237,7 +230,7 @@ class LaMovie :
             SERVER_KEY_LAMOVIE -> lamovieEmbedExtractor.videosFromUrl(embed.url, "$prefix - HLS")
             else -> emptyList()
         }
-    }.getOrElse { emptyList() }
+    }
 
     override fun List<Video>.sort(): List<Video> {
         val preferredQuality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT) ?: PREF_QUALITY_DEFAULT
@@ -333,8 +326,7 @@ class LaMovie :
         val combined = texts
             .asSequence()
             .filterNotNull()
-            .map { it.lowercase(Locale.US) }
-            .joinToString(" ")
+            .joinToString(" ") { it.lowercase(Locale.US) }
 
         SERVER_KEYWORDS.forEach { (key, keywords) ->
             if (keywords.any { it in combined }) return key
@@ -368,7 +360,7 @@ class LaMovie :
         .addQueryParameter("page", page.toString())
 
     private fun Response.parseListing(allowShortQueryFallback: Boolean = false): AnimesPage {
-        val root = json.parseToJsonElement(body.string()).jsonObject
+        val root = parseAs<JsonElement>().jsonObject
         if (root["error"]?.jsonPrimitive?.booleanOrNull == true) {
             val message = root["message"]?.jsonPrimitive?.contentOrNull ?: "Error desconocido"
             if (allowShortQueryFallback && message.contains("muy corta", ignoreCase = true)) {
@@ -378,7 +370,7 @@ class LaMovie :
         }
 
         val data = root["data"] ?: throw Exception("Respuesta vacía de la API")
-        val listing = json.decodeFromJsonElement(ListingDataDto.serializer(), data)
+        val listing = data.parseAs<ListingDataDto>()
         val entries = listing.posts.map { it.toSAnime() }
         val hasNext = listing.pagination?.let { (it.currentPage ?: 0) < (it.lastPage ?: 0) } ?: false
         return AnimesPage(entries, hasNext)
@@ -391,7 +383,7 @@ class LaMovie :
         var firstSeasonUsed: String? = null
 
         for (candidate in initialSeasons) {
-            val result = kotlin.runCatching { fetchEpisodesPage(seriesId, candidate, 1) }.getOrNull()
+            val result = runCatching { fetchEpisodesPage(seriesId, candidate, 1) }.getOrNull()
             if (result != null) {
                 firstResponse = result
                 firstSeasonUsed = candidate
@@ -430,10 +422,8 @@ class LaMovie :
 
         val request = GET(builder.build(), headers)
 
-        val response = client.newCall(request).execute()
-        response.use {
-            return it.parseData(EpisodesListDto.serializer())
-        }
+        return client.newCall(request).execute()
+            .parseData<EpisodesListDto>()
     }
 
     private fun apiUrlBuilder(vararg segments: String): HttpUrl.Builder {
@@ -442,13 +432,13 @@ class LaMovie :
         return apiBase
     }
 
-    private fun <T> Response.parseData(serializer: KSerializer<T>): T {
+    private inline fun <reified T> Response.parseData(): T {
         val element = parseDataElement()
-        return json.decodeFromJsonElement(serializer, element)
+        return element.parseAs<T>()
     }
 
     private fun Response.parseDataElement(): JsonElement {
-        val root = json.parseToJsonElement(body.string()).jsonObject
+        val root = bodyString().parseAs<JsonElement>().jsonObject
         if (root["error"]?.jsonPrimitive?.booleanOrNull == true) {
             val message = root["message"]?.jsonPrimitive?.contentOrNull ?: "Error desconocido"
             throw Exception(message)
@@ -469,8 +459,7 @@ class LaMovie :
         val season = (seasonNumber ?: 1).coerceAtLeast(1)
         val number = (episodeNumber ?: 1).coerceAtLeast(1)
         val baseName = sequenceOf(name, title)
-            .mapNotNull { it?.takeIf(String::isNotBlank) }
-            .firstOrNull()
+            .firstNotNullOfOrNull { it?.takeIf(String::isNotBlank) }
             ?: "Episodio $number"
 
         val displayName = "T${season}x$number - $baseName"
@@ -815,11 +804,6 @@ class LaMovie :
 
             val stored = preferences.getString(key, PREF_QUALITY_DEFAULT) ?: PREF_QUALITY_DEFAULT
             value = stored
-
-            setOnPreferenceChangeListener { _, newValue ->
-                preferences.edit().putString(key, newValue as String).apply()
-                true
-            }
         }.also(screen::addPreference)
 
         ListPreference(screen.context).apply {
@@ -853,11 +837,6 @@ class LaMovie :
 
             val stored = preferences.getString(key, PREF_SERVER_DEFAULT) ?: PREF_SERVER_DEFAULT
             value = stored
-
-            setOnPreferenceChangeListener { _, newValue ->
-                preferences.edit().putString(key, newValue as String).apply()
-                true
-            }
         }.also(screen::addPreference)
     }
 }

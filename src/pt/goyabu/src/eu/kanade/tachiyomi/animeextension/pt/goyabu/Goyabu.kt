@@ -1,6 +1,5 @@
 package eu.kanade.tachiyomi.animeextension.pt.goyabu
 
-import android.app.Application
 import android.util.Base64
 import androidx.preference.ListPreference
 import androidx.preference.PreferenceScreen
@@ -14,9 +13,11 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.ParsedAnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.awaitSuccess
-import eu.kanade.tachiyomi.util.asJsoup
+import keiyoushi.utils.getPreferencesLazy
 import keiyoushi.utils.parallelCatchingFlatMapBlocking
+import keiyoushi.utils.parseAs
 import keiyoushi.utils.tryParse
+import keiyoushi.utils.useAsJsoup
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -25,8 +26,6 @@ import okhttp3.Request
 import okhttp3.Response
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
 import java.text.SimpleDateFormat
 import java.util.Locale
 
@@ -46,9 +45,7 @@ class Goyabu :
 
     override val supportsLatest = true
 
-    private val preferences by lazy {
-        Injekt.get<Application>().getSharedPreferences("source_$id", 0x0000)
-    }
+    private val preferences by getPreferencesLazy()
 
     override fun headersBuilder() = super.headersBuilder()
         .add("Referer", baseUrl)
@@ -91,7 +88,7 @@ class Goyabu :
     }
 
     override fun latestUpdatesParse(response: Response): AnimesPage {
-        val document = response.asJsoup()
+        val document = response.useAsJsoup()
         val animes = document.select(latestUpdatesSelector())
             .map(::latestUpdatesFromElement)
 
@@ -112,17 +109,33 @@ class Goyabu :
         page: Int,
         query: String,
         filters: AnimeFilterList,
-    ): AnimesPage = if (query.startsWith(PREFIX_SEARCH)) {
-        val path = query.removePrefix(PREFIX_SEARCH)
-        client.newCall(GET("$baseUrl/$path"))
-            .awaitSuccess()
-            .use(::searchAnimeByIdParse)
-    } else {
-        super.getSearchAnime(page, query, filters)
+    ): AnimesPage {
+        if (query.startsWith("https://")) {
+            val url = query.toHttpUrl()
+            if (url.host != baseUrl.toHttpUrl().host) {
+                throw Exception("Unsupported url")
+            }
+            val searchQuery = if (url.pathSegments.size > 1) {
+                "${url.pathSegments[0]}/${url.pathSegments[1]}"
+            } else {
+                url.pathSegments.getOrNull(0)?.takeIf(String::isNotBlank)
+                    ?: throw Exception("Unsupported url")
+            }
+            return getSearchAnime(page, "${PREFIX_SEARCH}$searchQuery", filters)
+        }
+
+        if (query.startsWith(PREFIX_SEARCH)) {
+            val path = query.removePrefix(PREFIX_SEARCH)
+            return client.newCall(GET("$baseUrl/$path"))
+                .awaitSuccess()
+                .use(::searchAnimeByIdParse)
+        }
+
+        return super.getSearchAnime(page, query, filters)
     }
 
     private fun searchAnimeByIdParse(response: Response): AnimesPage {
-        val details = animeDetailsParse(response).apply {
+        val details = animeDetailsParse(response.useAsJsoup()).apply {
             setUrlWithoutDomain(response.request.url.toString())
             initialized = true
         }
@@ -164,7 +177,7 @@ class Goyabu :
 
     // ============================== Episodes ==============================
     override fun episodeListParse(response: Response): List<SEpisode> {
-        val document = getRealDoc(response.asJsoup())
+        val document = getRealDoc(response.useAsJsoup())
         val script = document.selectFirst("script:containsData(const allEpisodes)")
             ?: return emptyList()
 
@@ -174,7 +187,7 @@ class Goyabu :
             .substringBefore(";")
             .trim()
 
-        val episodes = json.decodeFromString<List<EpisodeDto>>(jsonString)
+        val episodes = jsonString.parseAs<List<EpisodeDto>>(json)
         return episodes.reversed().map { it.toSEpisode() }
     }
 
@@ -184,7 +197,7 @@ class Goyabu :
 
     // ============================ Video Links =============================
     override fun videoListParse(response: Response): List<Video> {
-        val document = response.asJsoup()
+        val document = response.useAsJsoup()
 
         return document.select("[data-blogger-url-encrypted]")
             .parallelCatchingFlatMapBlocking {
@@ -196,7 +209,8 @@ class Goyabu :
     }
 
     private val bloggerExtractor by lazy { BloggerExtractor(client) }
-    private fun getVideosFromURL(url: String): List<Video> = when {
+
+    private suspend fun getVideosFromURL(url: String): List<Video> = when {
         "blogger.com" in url -> bloggerExtractor.videosFromUrl(url, headers)
         else -> emptyList()
     }
@@ -216,12 +230,6 @@ class Goyabu :
             entryValues = PREF_QUALITY_VALUES
             setDefaultValue(PREF_QUALITY_DEFAULT)
             summary = "%s"
-            setOnPreferenceChangeListener { _, newValue ->
-                val selected = newValue as String
-                val index = findIndexOfValue(selected)
-                val entry = entryValues[index] as String
-                preferences.edit().putString(key, entry).commit()
-            }
         }.also(screen::addPreference)
     }
 
@@ -241,7 +249,7 @@ class Goyabu :
         if (menu != null) {
             val originalUrl = menu.parent()!!.attr("href")
             val response = client.newCall(GET(originalUrl, headers)).execute()
-            return response.asJsoup()
+            return response.useAsJsoup()
         }
 
         return document
@@ -271,7 +279,7 @@ class Goyabu :
             name = "Episódio $episodio" + if (episodeName.isNotEmpty()) " - $episodeName" else ""
             episode_number = episodio.toFloatOrNull() ?: 1F
             date_upload = DATE_FORMATTER.tryParse(update.trim())
-            scanlator = "Áudio: $audio"
+            scanlator = audio?.takeIf { it.isNotBlank() }?.let { "Áudio: $it" }
         }
     }
 }

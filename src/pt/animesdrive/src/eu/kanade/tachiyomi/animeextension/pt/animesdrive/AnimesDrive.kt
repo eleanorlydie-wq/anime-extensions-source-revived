@@ -8,9 +8,11 @@ import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.multisrc.dooplay.DooPlay
 import eu.kanade.tachiyomi.network.GET
-import eu.kanade.tachiyomi.util.asJsoup
+import eu.kanade.tachiyomi.network.awaitSuccess
+import keiyoushi.utils.bodyString
 import keiyoushi.utils.parallelCatchingFlatMapBlocking
 import keiyoushi.utils.parseAs
+import keiyoushi.utils.useAsJsoup
 import kotlinx.serialization.Serializable
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
@@ -104,7 +106,7 @@ class AnimesDrive :
 
     // ============================ Video Links =============================
     override fun videoListParse(response: Response): List<Video> {
-        val document = response.asJsoup()
+        val document = response.useAsJsoup()
         val players = document.select("ul#playeroptionsul li")
         return players.parallelCatchingFlatMapBlocking(::getPlayerVideos)
     }
@@ -112,7 +114,7 @@ class AnimesDrive :
     private val bloggerExtractor by lazy { BloggerExtractor(client) }
     private val universalExtractor by lazy { UniversalExtractor(client) }
 
-    private fun getPlayerVideos(player: Element): List<Video> {
+    private suspend fun getPlayerVideos(player: Element): List<Video> {
         val name = player.selectFirst("span.title")!!.text()
             .run {
                 when (this.uppercase()) {
@@ -153,18 +155,19 @@ class AnimesDrive :
         return videos
     }
 
-    private fun getPlayerUrl(player: Element): String {
+    private suspend fun getPlayerUrl(player: Element): String {
         val type = player.attr("data-type")
         val id = player.attr("data-post")
         val num = player.attr("data-nume")
         return client.newCall(GET("$baseUrl/wp-json/dooplayer/v2/$id/$type/$num"))
-            .execute().body.string()
+            .awaitSuccess().bodyString()
             .substringAfter("\"embed_url\":\"")
             .substringBefore("\",")
             .replace("\\", "")
     }
 
     // ============================== Filters ===============================
+    @Volatile
     private var hasFetchedGenresArray = false
 
     override val genreFilterHeader = "Apenas um tipo de filtro por vez"
@@ -185,6 +188,7 @@ class AnimesDrive :
         AnimeFilterList()
     }
 
+    @Synchronized
     override fun fetchGenresList() {
         if (hasFetchedGenresArray || !fetchGenres) return
 

@@ -25,7 +25,6 @@ import eu.kanade.tachiyomi.multisrc.dooplay.DooPlay
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.network.awaitSuccess
-import eu.kanade.tachiyomi.util.asJsoup
 import keiyoushi.lib.cryptoaes.CryptoAES
 import keiyoushi.utils.bodyString
 import keiyoushi.utils.parallelCatchingFlatMap
@@ -33,7 +32,7 @@ import keiyoushi.utils.parallelCatchingFlatMapBlocking
 import keiyoushi.utils.parseAs
 import keiyoushi.utils.useAsJsoup
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -44,7 +43,6 @@ import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import java.net.URLDecoder
-import kotlin.text.RegexOption
 
 class FlixLatam :
     DooPlay(
@@ -52,8 +50,6 @@ class FlixLatam :
         "FlixLatam",
         "https://flixlatam.com",
     ) {
-    private val json by lazy { Json { ignoreUnknownKeys = true } }
-
     override fun popularAnimeRequest(page: Int) = GET("$baseUrl/pelicula/page/$page")
 
     override fun popularAnimeSelector() = latestUpdatesSelector()
@@ -71,7 +67,7 @@ class FlixLatam :
 
     // ============================ Video Links =============================
     override fun videoListParse(response: Response): List<Video> {
-        val document = response.asJsoup()
+        val document = response.useAsJsoup()
         val players = document.select("ul#playeroptionsul li")
         val referer = response.request.url.toString()
         val embedHeaders = headersBuilder().set("Referer", referer).build()
@@ -85,7 +81,7 @@ class FlixLatam :
 
                 val embedDoc = Jsoup.parse(htmlContent)
                 val links = extractNewExtractorLinks(embedDoc, htmlContent)
-                    ?: return@parallelCatchingFlatMapBlocking emptyList<Video>()
+                    ?: return@parallelCatchingFlatMapBlocking emptyList()
 
                 links.parallelCatchingFlatMap { (link, language) ->
                     serverVideoResolver(link, " $language")
@@ -294,7 +290,7 @@ class FlixLatam :
 
         return runCatching {
             val decoded = Base64.decode(payload, Base64.URL_SAFE or Base64.NO_WRAP)
-            val element = json.parseToJsonElement(String(decoded))
+            val element = String(decoded, Charsets.UTF_8).parseAs<JsonElement>()
             val obj = element.jsonObject
 
             val link = obj["link"]?.jsonPrimitive?.contentOrNull
@@ -354,13 +350,6 @@ class FlixLatam :
             entryValues = PREF_LANG_VALUES
             setDefaultValue(PREF_LANG_DEFAULT)
             summary = "%s"
-
-            setOnPreferenceChangeListener { _, newValue ->
-                val selected = newValue as String
-                val index = findIndexOfValue(selected)
-                val entry = entryValues[index] as String
-                preferences.edit().putString(key, entry).commit()
-            }
         }
         ListPreference(screen.context).apply {
             key = PREF_SERVER_KEY
@@ -369,14 +358,8 @@ class FlixLatam :
             entryValues = SERVER_LIST
             setDefaultValue(PREF_SERVER_DEFAULT)
             summary = "%s"
-
-            setOnPreferenceChangeListener { _, newValue ->
-                val selected = newValue as String
-                val index = findIndexOfValue(selected)
-                val entry = entryValues[index] as String
-                preferences.edit().putString(key, entry).commit()
-            }
         }.also(screen::addPreference)
+
         screen.addPreference(langPref)
     }
 

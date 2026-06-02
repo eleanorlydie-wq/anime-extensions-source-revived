@@ -1,18 +1,21 @@
 package eu.kanade.tachiyomi.animeextension.pt.anikyuu.extractors
 
+import aniyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.animesource.model.Video
-import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.network.GET
+import eu.kanade.tachiyomi.network.awaitSuccess
+import keiyoushi.utils.bodyString
 import okhttp3.Headers
 import okhttp3.OkHttpClient
 
 class StrmupExtractor(private val client: OkHttpClient, private val headers: Headers) {
 
     private val playlistUtils by lazy { PlaylistUtils(client) }
-    fun videosFromUrl(url: String, name: String = "NOA"): List<Video> {
+
+    suspend fun videosFromUrl(url: String, name: String = "Strmup"): List<Video> {
         val id = url.split("/").last()
-        val body = client.newCall(GET("https://strmup.to/ajax/stream?filecode=$id", headers)).execute()
-            .body.string()
+        val body = client.newCall(GET("https://strmup.to/ajax/stream?filecode=$id", headers))
+            .awaitSuccess().bodyString()
 
         return when {
             "streaming_url" in body -> {
@@ -23,7 +26,7 @@ class StrmupExtractor(private val client: OkHttpClient, private val headers: Hea
 
                 playlistUtils.extractFromHls(
                     videoUrl,
-                    videoNameGen = { "Strmup - $it" },
+                    videoNameGen = { "$name - $it" },
                 )
             }
 

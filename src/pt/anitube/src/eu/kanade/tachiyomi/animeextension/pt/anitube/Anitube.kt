@@ -13,10 +13,10 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.ParsedAnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.awaitSuccess
-import eu.kanade.tachiyomi.util.asJsoup
 import keiyoushi.utils.getPreferencesLazy
 import keiyoushi.utils.parallelCatchingFlatMapBlocking
 import keiyoushi.utils.tryParse
+import keiyoushi.utils.useAsJsoup
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
 import okhttp3.Response
@@ -107,7 +107,7 @@ class Anitube :
     }
 
     private fun searchAnimeByIdParse(response: Response): AnimesPage {
-        val details = animeDetailsParse(response).apply {
+        val details = animeDetailsParse(response.useAsJsoup()).apply {
             setUrlWithoutDomain(response.request.url.toString())
             initialized = true
         }
@@ -178,11 +178,11 @@ class Anitube :
     override fun episodeListSelector() = "div.animepag_episodios_item > a"
 
     override fun episodeListParse(response: Response) = buildList {
-        var doc = getRealDoc(response.asJsoup())
+        var doc = getRealDoc(response.useAsJsoup())
         do {
             if (isNotEmpty()) {
                 val path = doc.selectFirst(popularAnimeNextPageSelector())!!.attr("href")
-                doc = client.newCall(GET(baseUrl + path, headers)).execute().asJsoup()
+                doc = client.newCall(GET(baseUrl + path, headers)).execute().useAsJsoup()
             }
             doc.select(episodeListSelector())
                 .map(::episodeFromElement)
@@ -207,7 +207,7 @@ class Anitube :
     private val anitubeExtractor by lazy { AnitubeExtractor(headers, client, preferences) }
 
     override fun videoListParse(response: Response): List<Video> {
-        val document = response.asJsoup()
+        val document = response.useAsJsoup()
 
         val videoLinks = document
             .select("div.video_container > a, div.playerContainer > a")
@@ -239,12 +239,6 @@ class Anitube :
             entryValues = PREF_QUALITY_ENTRIES
             setDefaultValue(PREF_QUALITY_DEFAULT)
             summary = "%s"
-            setOnPreferenceChangeListener { _, newValue ->
-                val selected = newValue as String
-                val index = findIndexOfValue(selected)
-                val entry = entryValues[index] as String
-                preferences.edit().putString(key, entry).commit()
-            }
         }.also(screen::addPreference)
 
         // Auth Code
@@ -274,7 +268,7 @@ class Anitube :
         return document.selectFirst("div.controles_ep > a[href]:has(i.spr.listaEP)")
             ?.let {
                 val path = it.attr("href")
-                client.newCall(GET(baseUrl + path, headers)).execute().asJsoup()
+                client.newCall(GET(baseUrl + path, headers)).execute().useAsJsoup()
             } ?: document
     }
 

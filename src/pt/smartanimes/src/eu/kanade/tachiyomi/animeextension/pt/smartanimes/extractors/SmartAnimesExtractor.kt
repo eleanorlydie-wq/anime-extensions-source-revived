@@ -4,6 +4,8 @@ import aniyomi.lib.googledriveplayerextractor.GoogleDrivePlayerExtractor
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
+import eu.kanade.tachiyomi.network.awaitSuccess
+import keiyoushi.utils.bodyString
 import keiyoushi.utils.parseAs
 import kotlinx.serialization.Serializable
 import okhttp3.FormBody
@@ -18,8 +20,8 @@ class SmartAnimesExtractor(private val client: OkHttpClient, private val headers
     private val gdriveExtractor by lazy { GoogleDrivePlayerExtractor(client, headers) }
     private val sendNowExtractor by lazy { SendNowExtractor(client, headers) }
 
-    fun videosFromUrl(url: String, name: String): List<Video> {
-        val content = client.newCall(GET(url, headers)).execute().body.string()
+    suspend fun videosFromUrl(url: String, name: String): List<Video> {
+        val content = client.newCall(GET(url, headers)).awaitSuccess().bodyString()
 
         val item = content.substringAfter("var item = ", "")
             .substringBefore(";")
@@ -47,7 +49,7 @@ class SmartAnimesExtractor(private val client: OkHttpClient, private val headers
 
         val sourceUrl =
             noRedirectClient.newCall(POST(options.soralink_ajaxurl, newHeaders, formBody))
-                .execute().use { it.header("location") }
+                .awaitSuccess().use { it.header("location") }
                 ?: return emptyList()
 
         return when {
