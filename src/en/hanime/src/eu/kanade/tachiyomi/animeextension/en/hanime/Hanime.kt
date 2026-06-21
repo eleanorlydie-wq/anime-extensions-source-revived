@@ -146,10 +146,10 @@ class Hanime :
      * bundled lists until the first fetch completes.
      */
     @Volatile
-    private var dynamicTags: List<Tag> = emptyList()
+    private var dynamicTagNames: List<String> = emptyList()
 
     @Volatile
-    private var dynamicBrands: List<Brand> = emptyList()
+    private var dynamicBrandNames: List<String> = emptyList()
 
     /** Timestamp of when [cachedSearchHits] was last fetched. */
     @Volatile
@@ -215,18 +215,16 @@ class Hanime :
     /** Rebuilds the dynamic tag/brand filter lists from the freshly fetched catalogue. */
     private fun updateFilterOptions(hits: List<HitsModel>) {
         if (hits.isEmpty()) return
-        dynamicTags = hits.asSequence()
+        dynamicTagNames = hits.asSequence()
             .flatMap { it.tags.asSequence() }
             .mapNotNull { it.trim().takeIf(String::isNotEmpty) }
             .distinct()
             .sortedBy { it.lowercase(Locale.US) }
-            .map { Tag(it, it) }
             .toList()
-        dynamicBrands = hits.asSequence()
+        dynamicBrandNames = hits.asSequence()
             .mapNotNull { it.brand?.trim()?.takeIf(String::isNotEmpty) }
             .distinct()
             .sortedBy { it.lowercase(Locale.US) }
-            .map { Brand(it, it) }
             .toList()
     }
 
@@ -815,18 +813,33 @@ class Hanime :
     // ── Filters ────────────────────────────────────────────────────────
 
     override fun getFilterList(): AnimeFilterList = AnimeFilterList(
-        AnimeFilter.Header("Tag & brand lists refresh from the site after the first browse/search."),
-        TagList(dynamicTags.ifEmpty { getTags() }),
-        BrandList(dynamicBrands.ifEmpty { getBrands() }),
+        AnimeFilter.Header("Type to search; separate with , or ;  ·  prefix - to exclude a tag."),
+        AnimeFilter.Header("Tag & brand suggestions refresh from the site after the first browse/search."),
+        TagFilter(dynamicTagNames.ifEmpty { fallbackTagNames }),
+        BrandFilter(dynamicBrandNames.ifEmpty { fallbackBrandNames }),
         SortFilter(sortableList.map { it.first }.toTypedArray()),
         TagInclusionMode(),
     )
 
-    internal class Tag(val id: String, name: String) : AnimeFilter.TriState(name)
-    internal class Brand(val id: String, name: String) : AnimeFilter.CheckBox(name)
-    private class TagList(tags: List<Tag>) : AnimeFilter.Group<Tag>("Tags", tags)
-    private class BrandList(brands: List<Brand>) : AnimeFilter.Group<Brand>("Brands", brands)
+    // Autocomplete inputs. Tags support "-" exclusion (filtering is client-side,
+    // so exclusion is fully honoured); brands are inclusion-only.
+    private class TagFilter(suggestions: List<String>) : AnimeFilter.AutoComplete("Tags", "e.g. milf, vanilla; -netorare", suggestions = suggestions)
+
+    private class BrandFilter(suggestions: List<String>) : AnimeFilter.AutoComplete("Brands", "e.g. pink pineapple, queen bee", suggestions = suggestions)
+
     private class TagInclusionMode : AnimeFilter.Select<String>("Included tags mode", arrayOf("And", "Or"), 0)
+
+    // Simple holders backing the bundled fallback dictionaries below.
+    private class Tag(val id: String, name: String) : AnimeFilter.TriState(name)
+    private class Brand(val id: String, name: String) : AnimeFilter.CheckBox(name)
+
+    // Fallback suggestion dictionaries, used until the first catalogue fetch populates the dynamic lists.
+    private val fallbackTagNames by lazy { getTags().map { it.id } }
+    private val fallbackBrandNames by lazy { getBrands().map { it.id } }
+
+    private fun tokenize(state: String): List<String> = state.split(',', ';')
+        .map { it.trim() }
+        .filter { it.isNotEmpty() }
 
     private fun getSearchParameters(filters: AnimeFilterList): SearchParameters {
         val includedTags = mutableListOf<String>()
@@ -837,20 +850,13 @@ class Hanime :
         var ordering = "desc"
         filters.forEach { filter ->
             when (filter) {
-                is TagList -> {
-                    filter.state.forEach { tag ->
-                        if (tag.isIncluded()) {
-                            includedTags.add(
-                                tag.id.lowercase(
-                                    Locale.US,
-                                ),
-                            )
-                        } else if (tag.isExcluded()) {
-                            blackListedTags.add(
-                                tag.id.lowercase(
-                                    Locale.US,
-                                ),
-                            )
+                is TagFilter -> {
+                    tokenize(filter.state).forEach { token ->
+                        if (token.startsWith("-")) {
+                            token.drop(1).trim().takeIf { it.isNotEmpty() }
+                                ?.let { blackListedTags.add(it.lowercase(Locale.US)) }
+                        } else {
+                            includedTags.add(token.lowercase(Locale.US))
                         }
                     }
                 }
@@ -871,15 +877,10 @@ class Hanime :
                     }
                 }
 
-                is BrandList -> {
-                    filter.state.forEach { brand ->
-                        if (brand.state) {
-                            brands.add(
-                                brand.id.lowercase(
-                                    Locale.US,
-                                ),
-                            )
-                        }
+                is BrandFilter -> {
+                    tokenize(filter.state).forEach { token ->
+                        token.removePrefix("-").trim().takeIf { it.isNotEmpty() }
+                            ?.let { brands.add(it.lowercase(Locale.US)) }
                     }
                 }
 
