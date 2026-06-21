@@ -20,6 +20,7 @@ import okhttp3.Request
 import okhttp3.Response
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
+import java.util.Locale
 
 class Rule34Video :
     ParsedAnimeHttpSource(),
@@ -99,6 +100,8 @@ class Rule34Video :
             return GET("$baseUrl/search/$newQuery", headers)
         }
 
+        ensureTagDictionary()
+
         val sortType = filters.getUriPart<OrderFilter>()
         val categoryFilter = filters.getUriPart<CategoryBy>()
         val tagIds = resolveTagIds(filters)
@@ -125,15 +128,45 @@ class Rule34Video :
 
     private fun buildTagIdsParam(tagIds: List<String>): String = if (tagIds.isEmpty()) "all" else "all," + tagIds.joinToString(",")
 
-    // Resolves the comma-separated tag names typed by the user into the numeric
-    // tag IDs the site expects. Numeric input is passed through untouched so power
-    // users can paste IDs directly. Multiple tags are AND-ed together by the site.
+    // Cached tag dictionary powering the autocomplete suggestions and fast name->id
+    // resolution. The site's autocomplete endpoint returns the full common tag set
+    // (~8800 entries) in one call, so we fetch it once and reuse it.
+    @Volatile
+    private var tagDictionary: Map<String, String> = emptyMap() // lowercase name -> id
+
+    @Volatile
+    private var tagSuggestions: List<String> = emptyList() // display names, alphabetically ordered
+
+    private fun ensureTagDictionary() {
+        if (tagSuggestions.isNotEmpty()) return
+        runCatching {
+            val doc = client.newCall(GET("$baseUrl/search_ajax.php?tag=.", headers)).execute().asJsoup()
+            val pairs = parseTagItems(doc)
+            if (pairs.isNotEmpty()) {
+                tagDictionary = pairs.associate { it.second.lowercase(Locale.US) to it.first }
+                tagSuggestions = pairs.map { it.second }.distinct()
+            }
+        }.onFailure { Log.e("Rule34Video", "Failed to load tag dictionary", it) }
+    }
+
+    private fun parseTagItems(doc: Document): List<Pair<String, String>> = doc.select("div.item").mapNotNull { item ->
+        val id = item.selectFirst("input")?.attr("value")?.takeIf { it.isNotBlank() }
+            ?: return@mapNotNull null
+        val label = item.selectFirst("label")?.text()?.trim()?.takeIf { it.isNotEmpty() }
+            ?: return@mapNotNull null
+        id to label
+    }
+
+    // Resolves the typed tag names into the numeric tag IDs the site expects.
+    // Numeric input is passed through untouched so power users can paste IDs
+    // directly. Multiple tags are AND-ed together by the site. Exclusion ("-")
+    // is dropped because the site does not support excluding tags.
     private fun resolveTagIds(filters: AnimeFilterList): List<String> {
         val raw = (filters.find { it is TagFilter } as? TagFilter)?.state?.trim().orEmpty()
         if (raw.isBlank()) return emptyList()
-        return raw.split(",")
+        return raw.split(',', ';')
             .map { it.trim() }
-            .filter { it.isNotBlank() }
+            .filterNot { it.isEmpty() || it.startsWith("-") }
             .distinct()
             .mapNotNull(::lookupTagId)
             .distinct()
@@ -141,16 +174,12 @@ class Rule34Video :
 
     private fun lookupTagId(nameOrId: String): String? {
         if (nameOrId.all { it.isDigit() }) return nameOrId
+        // Fast path: the cached dictionary already covers most tags.
+        tagDictionary[nameOrId.lowercase(Locale.US)]?.let { return it }
+        // Fallback: query the autocomplete endpoint for tags not in the cache.
         return try {
             val url = "$baseUrl/search_ajax.php?tag=${nameOrId.replace(" ", "+")}"
-            val doc = client.newCall(GET(url, headers)).execute().asJsoup()
-            val items = doc.select("div.item").mapNotNull { item ->
-                val id = item.selectFirst("input")?.attr("value")?.takeIf { it.isNotBlank() }
-                    ?: return@mapNotNull null
-                val label = item.selectFirst("label")?.text().orEmpty()
-                id to label
-            }
-            // Prefer an exact (case-insensitive) name match, otherwise the closest suggestion.
+            val items = parseTagItems(client.newCall(GET(url, headers)).execute().asJsoup())
             items.firstOrNull { it.second.equals(nameOrId, ignoreCase = true) }?.first
                 ?: items.firstOrNull()?.first
         } catch (e: Exception) {
@@ -327,10 +356,10 @@ class Rule34Video :
         AnimeFilterList() // If uploader filter is enabled and ID is set, show no other filters
     } else {
         AnimeFilterList(
-            AnimeFilter.Header("Tags: type one or more tag names separated by commas"),
-            AnimeFilter.Header("e.g. \"futa, blonde, big breasts\" — videos must match them all."),
-            AnimeFilter.Header("Numeric tag IDs also work. Leave blank to browse everything."),
-            TagFilter(),
+            AnimeFilter.Header("Type tag names and pick from the suggestions; separate with , or ;"),
+            AnimeFilter.Header("Videos must match all chosen tags. Numeric IDs also work."),
+            AnimeFilter.Header("Suggestions load after your first search. Exclusion (-) isn't supported."),
+            TagFilter(tagSuggestions),
             AnimeFilter.Separator(),
             OrderFilter(),
             CategoryBy(),
@@ -338,7 +367,7 @@ class Rule34Video :
         )
     }
 
-    private class TagFilter : AnimeFilter.Text("Tags (comma-separated)", "")
+    private class TagFilter(suggestions: List<String>) : AnimeFilter.AutoComplete("Tags", "e.g. futa, blonde, big breasts", suggestions = suggestions)
 
     private class CategoryBy :
         UriPartFilter(
