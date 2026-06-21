@@ -93,32 +93,69 @@ class Rule34Video :
     }
 
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
-        val orderFilter = filters.getUriPart<OrderFilter>()
-        val categoryFilter = filters.getUriPart<CategoryBy>()
-        val sortType = when (orderFilter) {
-            "latest-updates" -> "post_date"
-            "most-popular" -> "video_viewed"
-            "top-rated" -> "rating"
-            else -> ""
+        // Deep-link slug search coming from the URL intent activity.
+        if (query.startsWith(PREFIX_SEARCH)) {
+            val newQuery = query.removePrefix(PREFIX_SEARCH).dropLastWhile { it.isDigit() }
+            return GET("$baseUrl/search/$newQuery", headers)
         }
 
-        val tagFilter = (filters.find { it is TagFilter } as? TagFilter)?.state ?: ""
+        val sortType = filters.getUriPart<OrderFilter>()
+        val categoryFilter = filters.getUriPart<CategoryBy>()
+        val tagIds = resolveTagIds(filters)
+        val duration = filters.filterIsInstance<DurationFilter>().firstOrNull()
 
-        val url = "$baseUrl/search_ajax.php?tag=${tagFilter.ifBlank { "." }}"
-        val response = client.newCall(GET(url, headers)).execute()
-        tagDocument = response.asJsoup()
+        // The search path holds the free-text query (spaces -> dashes); everything
+        // else (tags, sort, category, duration) is passed as query parameters.
+        val pathQuery = query.trim().takeIf { it.isNotEmpty() }
+            ?.replace(Regex("\\s+"), "-")
+            ?.let { "$it/" }
+            .orEmpty()
 
-        val tagSearch = filters.getUriPart<TagSearch>()
+        val urlBuilder = "$baseUrl/search/$pathQuery".toHttpUrl().newBuilder()
+            .addQueryParameter("flag1", categoryFilter)
+            .addQueryParameter("sort_by", sortType)
+            .addQueryParameter("from_videos", page.toString())
+            .addQueryParameter("tag_ids", buildTagIdsParam(tagIds))
 
-        return if (query.isNotEmpty()) {
-            if (query.startsWith(PREFIX_SEARCH)) {
-                val newQuery = query.removePrefix(PREFIX_SEARCH).dropLastWhile { it.isDigit() }
-                GET("$baseUrl/search/$newQuery")
-            } else {
-                GET("$baseUrl/search/${query.replace(Regex("\\s"), "-")}/?flag1=$categoryFilter&sort_by=$sortType&from_videos=$page&tag_ids=all%2C$tagSearch")
+        duration?.from?.takeIf { it.isNotBlank() }?.let { urlBuilder.addQueryParameter("duration_from", it) }
+        duration?.to?.takeIf { it.isNotBlank() }?.let { urlBuilder.addQueryParameter("duration_to", it) }
+
+        return GET(urlBuilder.build().toString(), headers)
+    }
+
+    private fun buildTagIdsParam(tagIds: List<String>): String = if (tagIds.isEmpty()) "all" else "all," + tagIds.joinToString(",")
+
+    // Resolves the comma-separated tag names typed by the user into the numeric
+    // tag IDs the site expects. Numeric input is passed through untouched so power
+    // users can paste IDs directly. Multiple tags are AND-ed together by the site.
+    private fun resolveTagIds(filters: AnimeFilterList): List<String> {
+        val raw = (filters.find { it is TagFilter } as? TagFilter)?.state?.trim().orEmpty()
+        if (raw.isBlank()) return emptyList()
+        return raw.split(",")
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .mapNotNull(::lookupTagId)
+            .distinct()
+    }
+
+    private fun lookupTagId(nameOrId: String): String? {
+        if (nameOrId.all { it.isDigit() }) return nameOrId
+        return try {
+            val url = "$baseUrl/search_ajax.php?tag=${nameOrId.replace(" ", "+")}"
+            val doc = client.newCall(GET(url, headers)).execute().asJsoup()
+            val items = doc.select("div.item").mapNotNull { item ->
+                val id = item.selectFirst("input")?.attr("value")?.takeIf { it.isNotBlank() }
+                    ?: return@mapNotNull null
+                val label = item.selectFirst("label")?.text().orEmpty()
+                id to label
             }
-        } else {
-            GET("$baseUrl/search/?flag1=$categoryFilter&sort_by=$sortType&from_videos=$page&tag_ids=all%2C$tagSearch")
+            // Prefer an exact (case-insensitive) name match, otherwise the closest suggestion.
+            items.firstOrNull { it.second.equals(nameOrId, ignoreCase = true) }?.first
+                ?: items.firstOrNull()?.first
+        } catch (e: Exception) {
+            Log.e("Rule34Video", "Failed to resolve tag \"$nameOrId\"", e)
+            null
         }
     }
 
@@ -284,46 +321,28 @@ class Rule34Video :
     }
 
     // ============================== Filters ===============================
-    private var tagDocument = Document("")
-
-    private fun tagsResults(document: Document): Array<Pair<String, String>> {
-        val tagList = mutableListOf(Pair("<Select>", ""))
-        tagList.addAll(
-            document.select("div.item").map {
-                val tagValue = it.selectFirst("input")!!.attr("value")
-                val tagName = it.selectFirst("label")!!.text()
-                Pair(tagName, tagValue)
-            },
-        )
-        return tagList.toTypedArray()
-    }
-
     override fun getFilterList(): AnimeFilterList = if (preferences.getBoolean(PREF_UPLOADER_FILTER_ENABLED_KEY, false) &&
         preferences.getString(PREF_UPLOADER_ID_KEY, "")?.isNotBlank() == true
     ) {
         AnimeFilterList() // If uploader filter is enabled and ID is set, show no other filters
     } else {
         AnimeFilterList(
+            AnimeFilter.Header("Tags: type one or more tag names separated by commas"),
+            AnimeFilter.Header("e.g. \"futa, blonde, big breasts\" — videos must match them all."),
+            AnimeFilter.Header("Numeric tag IDs also work. Leave blank to browse everything."),
+            TagFilter(),
+            AnimeFilter.Separator(),
             OrderFilter(),
             CategoryBy(),
-            AnimeFilter.Separator(),
-            AnimeFilter.Header("Entered a \"tag\", click on \"filter\" then Click \"reset\" to load tags."),
-            TagFilter(),
-            TagSearch(tagsResults(tagDocument)),
+            DurationFilter(),
         )
     }
 
-    private class TagFilter : AnimeFilter.Text("Click \"reset\" without any text to load all A-Z tags.", "")
-
-    private class TagSearch(results: Array<Pair<String, String>>) :
-        UriPartFilter(
-            "Tag Filter ",
-            results,
-        )
+    private class TagFilter : AnimeFilter.Text("Tags (comma-separated)", "")
 
     private class CategoryBy :
         UriPartFilter(
-            "Category Filter ",
+            "Category",
             arrayOf(
                 Pair("All", ""),
                 Pair("Straight", "2109"),
@@ -336,13 +355,40 @@ class Rule34Video :
 
     private class OrderFilter :
         UriPartFilter(
-            "Sort By ",
+            "Sort by",
             arrayOf(
-                Pair("Latest", "latest-updates"),
-                Pair("Most Viewed", "most-popular"),
-                Pair("Top Rated", "top-rated"),
+                Pair("Latest", "post_date"),
+                Pair("Most Viewed", "video_viewed"),
+                Pair("Top Rated", "rating"),
+                Pair("Longest", "duration"),
+                Pair("Random", "pseudo_rand"),
             ),
         )
+
+    // Maps preset duration ranges to the site's duration_from / duration_to
+    // query parameters (values are in seconds).
+    private class DurationFilter :
+        AnimeFilter.Select<String>(
+            "Duration",
+            arrayOf("Any", "Under 1 min", "1 - 5 min", "5 - 20 min", "20 - 60 min", "Over 1 hour"),
+        ) {
+        val from: String
+            get() = when (state) {
+                2 -> "60"
+                3 -> "300"
+                4 -> "1200"
+                5 -> "3600"
+                else -> ""
+            }
+        val to: String
+            get() = when (state) {
+                1 -> "60"
+                2 -> "300"
+                3 -> "1200"
+                4 -> "3600"
+                else -> ""
+            }
+    }
 
     private open class UriPartFilter(displayName: String, val vals: Array<Pair<String, String>>) : AnimeFilter.Select<String>(displayName, vals.map { it.first }.toTypedArray()) {
         fun toUriPart() = vals[state].second
