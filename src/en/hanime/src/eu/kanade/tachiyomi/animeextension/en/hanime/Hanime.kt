@@ -138,6 +138,19 @@ class Hanime :
     @Volatile
     private var cachedSearchHits: List<HitsModel>? = null
 
+    /**
+     * Tag and brand filter options derived from the live catalogue. Populated on
+     * every successful search fetch so the filter sheet always reflects exactly
+     * what the site currently offers (and matches it case-correctly), instead of
+     * relying solely on a hand-maintained list that goes stale. Falls back to the
+     * bundled lists until the first fetch completes.
+     */
+    @Volatile
+    private var dynamicTags: List<Tag> = emptyList()
+
+    @Volatile
+    private var dynamicBrands: List<Brand> = emptyList()
+
     /** Timestamp of when [cachedSearchHits] was last fetched. */
     @Volatile
     private var cachedSearchHitsTimestamp: Long = 0L
@@ -193,9 +206,28 @@ class Hanime :
                 }
                 cachedSearchHits = result
                 cachedSearchHitsTimestamp = System.currentTimeMillis()
+                updateFilterOptions(result)
                 result
             }
         }
+    }
+
+    /** Rebuilds the dynamic tag/brand filter lists from the freshly fetched catalogue. */
+    private fun updateFilterOptions(hits: List<HitsModel>) {
+        if (hits.isEmpty()) return
+        dynamicTags = hits.asSequence()
+            .flatMap { it.tags.asSequence() }
+            .mapNotNull { it.trim().takeIf(String::isNotEmpty) }
+            .distinct()
+            .sortedBy { it.lowercase(Locale.US) }
+            .map { Tag(it, it) }
+            .toList()
+        dynamicBrands = hits.asSequence()
+            .mapNotNull { it.brand?.trim()?.takeIf(String::isNotEmpty) }
+            .distinct()
+            .sortedBy { it.lowercase(Locale.US) }
+            .map { Brand(it, it) }
+            .toList()
     }
 
     // ── Popular Anime ──────────────────────────────────────────────────
@@ -783,8 +815,9 @@ class Hanime :
     // ── Filters ────────────────────────────────────────────────────────
 
     override fun getFilterList(): AnimeFilterList = AnimeFilterList(
-        TagList(getTags()),
-        BrandList(getBrands()),
+        AnimeFilter.Header("Tag & brand lists refresh from the site after the first browse/search."),
+        TagList(dynamicTags.ifEmpty { getTags() }),
+        BrandList(dynamicBrands.ifEmpty { getBrands() }),
         SortFilter(sortableList.map { it.first }.toTypedArray()),
         TagInclusionMode(),
     )
