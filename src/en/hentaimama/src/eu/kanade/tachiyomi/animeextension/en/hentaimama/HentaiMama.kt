@@ -15,6 +15,8 @@ import eu.kanade.tachiyomi.util.asJsoup
 import keiyoushi.utils.getPreferencesLazy
 import okhttp3.FormBody
 import okhttp3.Headers
+import okhttp3.HttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
 import okhttp3.Response
 import org.jsoup.nodes.Document
@@ -179,15 +181,14 @@ class HentaiMama :
 
     override fun searchAnimeSelector(): String = "article"
 
-    override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
-        val parameters = getSearchParameters(filters)
-        return if (query.isNotEmpty()) {
-            filterSearch = false
-            GET("$baseUrl/page/$page/?s=${query.replace(Regex("[\\W]"), " ")}") // regular search
-        } else {
-            filterSearch = true
-            GET("$baseUrl/advance-search/page/$page/?$parameters") // filter search
-        }
+    override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request = if (query.isNotEmpty()) {
+        filterSearch = false
+        GET("$baseUrl/page/$page/?s=${query.replace(Regex("[\\W]"), " ")}") // regular search
+    } else {
+        filterSearch = true
+        val urlBuilder = "$baseUrl/advance-search/page/$page/".toHttpUrl().newBuilder()
+        addSearchParameters(urlBuilder, filters)
+        GET(urlBuilder.build().toString(), headers) // filter search
     }
 
     // Details
@@ -257,8 +258,8 @@ class HentaiMama :
         Genre("Adventure"),
         Genre("Ahegao"),
         Genre("Anal"),
-        Genre("Animal Ears"),
-        Genre("Beastiality"),
+        Genre("Animal Girls"),
+        Genre("BDSM"),
         Genre("Blackmail"),
         Genre("Blowjob"),
         Genre("Bondage"),
@@ -266,14 +267,17 @@ class HentaiMama :
         Genre("Bukakke"),
         Genre("Cat Girl"),
         Genre("Comedy"),
+        Genre("Condom"),
         Genre("Cosplay"),
         Genre("Creampie"),
         Genre("Cross-dressing"),
+        Genre("Cute & Funny"),
         Genre("Dark Skin"),
         Genre("DeepThroat"),
         Genre("Demons"),
         Genre("Doctor"),
-        Genre("Double Penatration"),
+        Genre("Domination"),
+        Genre("Double Penetration"),
         Genre("Drama"),
         Genre("Dubbed"),
         Genre("Ecchi"),
@@ -286,21 +290,19 @@ class HentaiMama :
         Genre("Female Teacher"),
         Genre("Femdom"),
         Genre("Footjob"),
+        Genre("Furry"),
         Genre("Futanari"),
         Genre("Gangbang"),
-        Genre("Gore"),
         Genre("Gyaru"),
         Genre("Harem"),
         Genre("Historical"),
         Genre("Horny Slut"),
         Genre("Housewife"),
         Genre("Humiliation"),
-        Genre("Incest"),
         Genre("Inflation"),
         Genre("Internal Cumshot"),
         Genre("Lactation"),
         Genre("Large Breasts"),
-        Genre("Lolicon"),
         Genre("Magical Girls"),
         Genre("Maid"),
         Genre("Martial Arts"),
@@ -308,11 +310,13 @@ class HentaiMama :
         Genre("MILF"),
         Genre("Mind Break"),
         Genre("Molestation"),
+        Genre("Nipple Fuck"),
         Genre("Non-Japanese"),
         Genre("NTR"),
         Genre("Nuns"),
         Genre("Nurses"),
         Genre("Office Ladies"),
+        Genre("Orc/Goblin"),
         Genre("Police"),
         Genre("POV"),
         Genre("Pregnant"),
@@ -327,12 +331,13 @@ class HentaiMama :
         Genre("Shimapan"),
         Genre("Short"),
         Genre("Shoutacon"),
-        Genre("Slaves"),
         Genre("Sports"),
         Genre("Squirting"),
+        Genre("Step Daughter"),
+        Genre("Step Mother"),
+        Genre("Step Sister"),
         Genre("Stocking"),
         Genre("Strap-on"),
-        Genre("Strapped On"),
         Genre("Succubus"),
         Genre("Super Power"),
         Genre("Supernatural"),
@@ -340,7 +345,6 @@ class HentaiMama :
         Genre("Tentacles"),
         Genre("Three some"),
         Genre("Tits Fuck"),
-        Genre("Torture"),
         Genre("Toys"),
         Genre("Train Molestation"),
         Genre("Tsundere"),
@@ -357,6 +361,10 @@ class HentaiMama :
     internal class Year(val id: String) : AnimeFilter.CheckBox(id)
     private class YearList(years: List<Year>) : AnimeFilter.Group<Year>("Year", years)
     private fun getYears() = listOf(
+        Year("2026"),
+        Year("2025"),
+        Year("2024"),
+        Year("2023"),
         Year("2022"),
         Year("2021"),
         Year("2020"),
@@ -406,6 +414,7 @@ class HentaiMama :
         Producer("Animac"),
         Producer("AniMan"),
         Producer("Animax"),
+        Producer("AnimeFesta"),
         Producer("Antechinus"),
         Producer("APPP"),
         Producer("Armor"),
@@ -454,6 +463,7 @@ class HentaiMama :
         Producer("Innocent Grey"),
         Producer("Jam"),
         Producer("JapanAnime"),
+        Producer("Juicymango"),
         Producer("King Bee"),
         Producer("Kitty Films"),
         Producer("Kitty Media"),
@@ -471,7 +481,9 @@ class HentaiMama :
         Producer("Moonstone Cherry"),
         Producer("Mousou Senka"),
         Producer("MS Pictures"),
+        Producer("Nag"),
         Producer("Nihikime no Dozeu"),
+        Producer("No Future"),
         Producer("Nur"),
         Producer("NuTech Digital"),
         Producer("Obtain Future"),
@@ -485,6 +497,7 @@ class HentaiMama :
         Producer("PoRO"),
         Producer("Production I.G"),
         Producer("Queen Bee"),
+        Producer("Rojiura Jack"),
         Producer("Sakura Purin Animation"),
         Producer("Schoolzone"),
         Producer("Selfish"),
@@ -494,6 +507,7 @@ class HentaiMama :
         Producer("Shinyusha"),
         Producer("Shouten"),
         Producer("Silky’s"),
+        Producer("Sodeno19"),
         Producer("Soft Garage"),
         Producer("SoftCel Pictures"),
         Producer("SPEED"),
@@ -512,16 +526,17 @@ class HentaiMama :
         Producer("Toho Company"),
         Producer("Top-Marschal"),
         Producer("Toranoana"),
+        Producer("Torudaya"),
         Producer("Toshiba Entertainment"),
         Producer("Triangle Bitter"),
         Producer("Triple X"),
+        Producer("Umemaro3D"),
         Producer("Union Cho"),
         Producer("Valkyria"),
         Producer("White Bear"),
         Producer("Y.O.U.C"),
         Producer("ZIZ Entertainment"),
         Producer("Zyc"),
-
     )
 
     private data class Order(val name: String, val id: String)
@@ -538,48 +553,32 @@ class HentaiMama :
 
     )
 
-    private fun getSearchParameters(filters: AnimeFilterList): String {
-        var totalstring = ""
-        var sortBy = ""
+    // Appends the selected filters as properly URL-encoded query parameters.
+    // Using addQueryParameter (instead of manual string concatenation) ensures
+    // values containing spaces or special characters such as "Cute & Funny" and
+    // "Orc/Goblin" are encoded correctly instead of corrupting the query string.
+    private fun addSearchParameters(urlBuilder: HttpUrl.Builder, filters: AnimeFilterList) {
+        var sortBy = "weekly"
 
         filters.forEach { filter ->
             when (filter) {
-                is GenreList -> { // ---Genre
-                    filter.state.forEach { Genre ->
-                        if (Genre.state) {
-                            totalstring =
-                                totalstring + "&genres_filter%5B" + "%5D=" + Genre.id
-                        }
-                    }
-                }
+                is GenreList -> filter.state.filter { it.state }
+                    .forEach { urlBuilder.addQueryParameter("genres_filter[]", it.id) }
 
-                is YearList -> { // ---Year
-                    filter.state.forEach { Year ->
-                        if (Year.state) {
-                            totalstring =
-                                totalstring + "&years_filter%5B" + "%5D=" + Year.id
-                        }
-                    }
-                }
+                is YearList -> filter.state.filter { it.state }
+                    .forEach { urlBuilder.addQueryParameter("years_filter[]", it.id) }
 
-                is ProducerList -> { // ---Producer
-                    filter.state.forEach { Producer ->
-                        if (Producer.state) {
-                            totalstring =
-                                totalstring + "&studios_filter%5B" + "%5D=" + Producer.id
-                        }
-                    }
-                }
+                is ProducerList -> filter.state.filter { it.state }
+                    .forEach { urlBuilder.addQueryParameter("studios_filter[]", it.id) }
 
-                is OrderList -> { // ---Order
-                    sortBy = getOrder()[filter.state].id
-                }
+                is OrderList -> sortBy = getOrder()[filter.state].id
 
                 else -> {}
             }
         }
 
-        return "$totalstring&submit=Submit&filter=$sortBy"
+        urlBuilder.addQueryParameter("submit", "Submit")
+        urlBuilder.addQueryParameter("filter", sortBy)
     }
 
     override fun getFilterList(): AnimeFilterList = AnimeFilterList(
