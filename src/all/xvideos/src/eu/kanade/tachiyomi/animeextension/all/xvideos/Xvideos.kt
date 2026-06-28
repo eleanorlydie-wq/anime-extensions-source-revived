@@ -101,10 +101,11 @@ class Xvideos :
     }
 
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
-        val tagFilter = filters.find { it is Tags } as Tags
+        val tag = (filters.find { it is TagFilter } as? TagFilter)?.state?.trim()
+            ?.lowercase()?.replace(' ', '-').orEmpty()
         return when {
             query.isNotBlank() -> GET("$baseUrl/?k=$query&p=$page", headers)
-            tagFilter.state.isNotBlank() -> GET("$baseUrl/tags/${tagFilter.state}/$page ")
+            tag.isNotBlank() -> GET("$baseUrl/tags/$tag/$page", headers)
             else -> GET("$baseUrl/new/$page", headers)
         }
     }
@@ -132,11 +133,13 @@ class Xvideos :
     override fun latestUpdatesSelector() = throw Exception("not used")
 
     override fun getFilterList(): AnimeFilterList = AnimeFilterList(
-        AnimeFilter.Header("Search by text does not affect the filter"),
-        Tags("Tag"),
+        AnimeFilter.Header("Text search ignores the tag filter below"),
+        AnimeFilter.Header("Type a tag and pick from the suggestions"),
+        TagFilter(XvideosTags.slugs),
     )
 
-    internal class Tags(name: String) : AnimeFilter.Text(name)
+    internal class TagFilter(suggestions: List<String>) :
+        AnimeFilter.AutoComplete("Tag", "e.g. milf, teen, hentai", suggestions = suggestions)
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
         val videoQualityPref = ListPreference(screen.context).apply {
