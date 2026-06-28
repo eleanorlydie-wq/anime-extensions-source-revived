@@ -34,7 +34,7 @@ class Xnxx :
 
     private val preferences by getPreferencesLazy()
 
-    override fun popularAnimeSelector(): String = "div[id*='video_'].thumb-block"
+    override fun popularAnimeSelector(): String = "div.thumb-block.video"
 
     override fun popularAnimeRequest(page: Int): Request {
         val sdf = SimpleDateFormat("yyyy-MM", Locale.getDefault())
@@ -44,13 +44,13 @@ class Xnxx :
 
     override fun popularAnimeFromElement(element: Element): SAnime {
         val anime = SAnime.create()
-        anime.setUrlWithoutDomain("$baseUrl${element.select("div.thumb-inside div.thumb > a").attr("href")}")
-        anime.title = element.select("div.thumb-under > p > a").text()
-        anime.thumbnail_url = element.select("div.thumb-inside div.thumb img[id*='pic_']").attr("data-src")
+        anime.setUrlWithoutDomain("$baseUrl${element.select("div.thumb > a").attr("href")}")
+        anime.title = element.select("div.thumb-under a.title").text()
+        anime.thumbnail_url = element.select("div.thumb img").attr("data-src")
         return anime
     }
 
-    override fun popularAnimeNextPageSelector(): String = "#content-thumbs div.pagination ul li a.next"
+    override fun popularAnimeNextPageSelector(): String = "div.pagination a.next"
 
     override fun episodeListParse(response: Response): List<SEpisode> {
         val episodes = mutableListOf<SEpisode>()
