@@ -138,8 +138,7 @@ class Xvideos :
         TagFilter(XvideosTags.slugs),
     )
 
-    internal class TagFilter(suggestions: List<String>) :
-        AnimeFilter.AutoComplete("Tag", "e.g. milf, teen, hentai", suggestions = suggestions)
+    internal class TagFilter(suggestions: List<String>) : AnimeFilter.AutoComplete("Tag", "e.g. milf, teen, hentai", suggestions = suggestions)
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
         val videoQualityPref = ListPreference(screen.context).apply {
