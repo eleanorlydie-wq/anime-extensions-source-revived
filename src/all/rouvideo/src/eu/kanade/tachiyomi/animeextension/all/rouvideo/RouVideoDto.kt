@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.animeextension.all.rouvideo
 
+import android.util.Base64
 import eu.kanade.tachiyomi.animeextension.all.rouvideo.RouVideo.Companion.resolutionDesc
 import eu.kanade.tachiyomi.animeextension.all.rouvideo.RouVideoFilter.SORT_LIKE_KEY
 import eu.kanade.tachiyomi.animeextension.all.rouvideo.RouVideoFilter.SORT_VIEW_KEY
@@ -229,16 +230,41 @@ internal object RouVideoDto {
         val level: Int, // usually 0
     )
 
+    /**
+     * The playable HLS link is no longer served by the `/api/v/{id}` endpoint (it now returns
+     * `{}`). Instead the detail page's `__NEXT_DATA__` carries an obfuscated `ev` blob: a base64
+     * payload whose bytes are each shifted up by `k`. Undo the shift, then parse [PlayInfo].
+     */
     @Serializable
-    data class VideoData(
-        val video: VideoObject,
+    data class PlayPage(
+        val props: Props,
     ) {
         @Serializable
-        data class VideoObject(
-            val thumbVTTUrl: String,
-            val videoUrl: String,
-        )
+        data class Props(
+            val pageProps: PageProps,
+        ) {
+            @Serializable
+            data class PageProps(
+                val ev: Ev? = null,
+            )
+        }
     }
+
+    @Serializable
+    data class Ev(
+        val d: String,
+        val k: Int,
+    ) {
+        fun decodeToJson(): String = Base64.decode(d, Base64.DEFAULT)
+            .map { ((it.toInt() and 0xFF) - k).toChar() }
+            .joinToString("")
+    }
+
+    @Serializable
+    data class PlayInfo(
+        val videoUrl: String,
+        val thumbVTTUrl: String? = null,
+    )
 
     /* Not available in details */
     @Serializable
