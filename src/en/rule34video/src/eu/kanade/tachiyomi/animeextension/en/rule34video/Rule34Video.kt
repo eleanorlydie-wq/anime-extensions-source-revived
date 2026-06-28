@@ -133,11 +133,13 @@ class Rule34Video :
     // arrive too late, leaving the AutoComplete field with no suggestions. Tags
     // missing from the snapshot still resolve via the network fallback in
     // lookupTagId(). Both maps are built on first access (in-memory, no network).
-    private val tagDictionary: Map<String, String> by lazy { // lowercase name -> id
+    private val tagDictionary: Map<String, String> by lazy {
+        // lowercase name -> id
         Rule34VideoTags.pairs.associate { it.first.lowercase(Locale.US) to it.second }
     }
 
-    private val tagSuggestions: List<String> by lazy { // display names, alphabetically ordered
+    private val tagSuggestions: List<String> by lazy {
+        // display names, alphabetically ordered
         Rule34VideoTags.pairs.map { it.first }.distinct()
     }
 
