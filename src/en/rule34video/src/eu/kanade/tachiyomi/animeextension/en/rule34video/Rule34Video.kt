@@ -100,8 +100,6 @@ class Rule34Video :
             return GET("$baseUrl/search/$newQuery", headers)
         }
 
-        ensureTagDictionary()
-
         val sortType = filters.getUriPart<OrderFilter>()
         val categoryFilter = filters.getUriPart<CategoryBy>()
         val tagIds = resolveTagIds(filters)
@@ -128,25 +126,19 @@ class Rule34Video :
 
     private fun buildTagIdsParam(tagIds: List<String>): String = if (tagIds.isEmpty()) "all" else "all," + tagIds.joinToString(",")
 
-    // Cached tag dictionary powering the autocomplete suggestions and fast name->id
-    // resolution. The site's autocomplete endpoint returns the full common tag set
-    // (~8800 entries) in one call, so we fetch it once and reuse it.
-    @Volatile
-    private var tagDictionary: Map<String, String> = emptyMap() // lowercase name -> id
+    // Tag dictionary powering the autocomplete suggestions and fast name->id
+    // resolution. Loaded from the bundled snapshot (Rule34VideoTags) rather than
+    // fetched lazily, because the app builds the filter list exactly once — before
+    // any search runs — and never rebuilds it. A lazily-fetched list would always
+    // arrive too late, leaving the AutoComplete field with no suggestions. Tags
+    // missing from the snapshot still resolve via the network fallback in
+    // lookupTagId(). Both maps are built on first access (in-memory, no network).
+    private val tagDictionary: Map<String, String> by lazy { // lowercase name -> id
+        Rule34VideoTags.pairs.associate { it.first.lowercase(Locale.US) to it.second }
+    }
 
-    @Volatile
-    private var tagSuggestions: List<String> = emptyList() // display names, alphabetically ordered
-
-    private fun ensureTagDictionary() {
-        if (tagSuggestions.isNotEmpty()) return
-        runCatching {
-            val doc = client.newCall(GET("$baseUrl/search_ajax.php?tag=.", headers)).execute().asJsoup()
-            val pairs = parseTagItems(doc)
-            if (pairs.isNotEmpty()) {
-                tagDictionary = pairs.associate { it.second.lowercase(Locale.US) to it.first }
-                tagSuggestions = pairs.map { it.second }.distinct()
-            }
-        }.onFailure { Log.e("Rule34Video", "Failed to load tag dictionary", it) }
+    private val tagSuggestions: List<String> by lazy { // display names, alphabetically ordered
+        Rule34VideoTags.pairs.map { it.first }.distinct()
     }
 
     private fun parseTagItems(doc: Document): List<Pair<String, String>> = doc.select("div.item").mapNotNull { item ->
@@ -358,7 +350,7 @@ class Rule34Video :
         AnimeFilterList(
             AnimeFilter.Header("Type tag names and pick from the suggestions; separate with , or ;"),
             AnimeFilter.Header("Videos must match all chosen tags. Numeric IDs also work."),
-            AnimeFilter.Header("Suggestions load after your first search. Exclusion (-) isn't supported."),
+            AnimeFilter.Header("Exclusion (-) isn't supported."),
             TagFilter(tagSuggestions),
             AnimeFilter.Separator(),
             OrderFilter(),
@@ -367,7 +359,7 @@ class Rule34Video :
         )
     }
 
-    private class TagFilter(suggestions: List<String>) : AnimeFilter.AutoComplete("Tags", "e.g. futa, blonde, big breasts", suggestions = suggestions)
+    private class TagFilter(suggestions: List<String>) : AnimeFilter.AutoComplete("Tags", "e.g. futanari, blonde hair, big breasts", suggestions = suggestions)
 
     private class CategoryBy :
         UriPartFilter(
