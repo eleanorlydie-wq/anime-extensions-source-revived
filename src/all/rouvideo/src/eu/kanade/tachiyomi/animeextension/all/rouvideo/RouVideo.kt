@@ -451,14 +451,20 @@ class RouVideo(
 
     // ============================ Video Links =============================
 
-    override fun videoListRequest(episode: SEpisode) = GET("$apiUrl/$VIDEO_SLUG/${episode.url}", apiHeaders)
+    // The HLS link now lives in the detail page's __NEXT_DATA__, not the (now empty) /api endpoint.
+    override fun videoListRequest(episode: SEpisode) = GET("$videoUrl/$VIDEO_SLUG/${episode.url}", docHeaders)
 
     override fun videoListParse(response: Response): List<Video> {
-        val jsonStr = response.body.string()
-        val data = json.decodeFromString<RouVideoDto.VideoData>(jsonStr).video
+        val nextData = response.asJsoup().selectFirst("script#__NEXT_DATA__")?.data()
+            ?: throw Exception("Failed to load video data")
+
+        val ev = json.decodeFromString<RouVideoDto.PlayPage>(nextData).props.pageProps.ev
+            ?: throw Exception("No available videos")
+
+        val playInfo = json.decodeFromString<RouVideoDto.PlayInfo>(ev.decodeToJson())
 
         return playlistUtils.extractFromHls(
-            playlistUrl = data.videoUrl,
+            playlistUrl = playInfo.videoUrl,
             referer = "$videoUrl/",
         )
     }
