@@ -33,7 +33,7 @@ class EgyDead :
 
     // TODO: Check frequency of url changes to potentially
     // add back overridable baseurl preference
-    override val baseUrl = "https://egydead.space"
+    override val baseUrl = "https://tv10.egydead.live"
 
     override val lang = "ar"
 
