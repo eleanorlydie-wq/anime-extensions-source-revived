@@ -2,8 +2,8 @@ ext {
     extName = 'AnimesROLL'
     extClass = '.AnimesROLL'
     themePkg = 'dooplay'
-    baseUrl = 'https://anroll.tv'
-    overrideVersionCode = 4
+    baseUrl = 'https://anroll.plus'
+    overrideVersionCode = 5
 }
 
 apply plugin: "kei.plugins.extension.legacy"
