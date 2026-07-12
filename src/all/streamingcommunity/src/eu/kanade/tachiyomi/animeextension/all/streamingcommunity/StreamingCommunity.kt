@@ -471,7 +471,7 @@ class StreamingCommunity(override val lang: String, private val showType: String
     }
 
     companion object {
-        private const val DOMAIN_DEFAULT = "https://streamingunity.biz" // Redirect URL: https://streamingunity.tv
+        private const val DOMAIN_DEFAULT = "https://streamingunity.dog" // Redirect URL: https://streamingunity.tv
         private const val PREF_CUSTOM_DOMAIN_KEY = "custom_domain_v${BuildConfig.VERSION_NAME}"
         private const val TAG = "StreamingCommunity"
 

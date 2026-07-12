@@ -31,7 +31,7 @@ class AnimeID : ParsedAnimeHttpSource() {
 
     override val name = "AnimeID"
 
-    override val baseUrl = "https://www.animeid.tv/"
+    override val baseUrl = "https://www.harkenid.com/"
 
     override val lang = "es"
 
