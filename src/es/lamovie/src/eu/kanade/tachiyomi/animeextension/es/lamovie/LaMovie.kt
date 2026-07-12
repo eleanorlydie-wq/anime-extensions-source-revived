@@ -47,7 +47,7 @@ class LaMovie :
         "es",
         BuildConfig.MEGACLOUD_API,
         listOf(
-            "la.movie",
+            "lamovie.org",
         ),
     ) {
     override val id: Long = 5419283741928374105
@@ -610,7 +610,7 @@ class LaMovie :
         private const val EPISODES_PER_PAGE = 3000
 
         private val STATIC_IMAGE_HOSTS = listOf(
-            "https://la.movie/wp-content/uploads/",
+            "https://lamovie.org/wp-content/uploads/",
         )
         private const val TMDB_IMAGE_BASE = "https://image.tmdb.org/t/p"
         private val TMDB_POSTER_HOSTS = listOf(

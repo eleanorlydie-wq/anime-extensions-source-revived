@@ -22,7 +22,7 @@ class AnimesROLL :
     DooPlay(
         "pt-BR",
         "Animes ROLL",
-        "https://anroll.tv",
+        "https://anroll.plus",
     ) {
 
     private val tag by lazy { javaClass.simpleName }
