@@ -31,7 +31,7 @@ class WitAnime :
 
     override val name = "WIT ANIME"
 
-    override val baseUrl = "https://witanime.cyou"
+    override val baseUrl = "https://witanime.you"
 
     override val lang = "ar"
 

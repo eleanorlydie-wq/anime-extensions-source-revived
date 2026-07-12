@@ -2,8 +2,8 @@ ext {
     extName = 'DopeBox'
     extClass = '.DopeBox'
     themePkg = 'dopeflix'
-    baseUrl = 'https://dopebox.to'
-    overrideVersionCode = 18
+    baseUrl = 'https://dopebox.sx'
+    overrideVersionCode = 19
 }
 
 apply plugin: "kei.plugins.extension.legacy"

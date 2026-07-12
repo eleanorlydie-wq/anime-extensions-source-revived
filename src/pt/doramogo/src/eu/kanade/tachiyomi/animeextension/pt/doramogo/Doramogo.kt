@@ -26,7 +26,7 @@ class Doramogo : ParsedAnimeHttpSource() {
 
     override val name = "Doramogo"
 
-    override val baseUrl = "https://doramogo.com"
+    override val baseUrl = "https://www.doramogo.net"
 
     override val lang = "pt-BR"
 
