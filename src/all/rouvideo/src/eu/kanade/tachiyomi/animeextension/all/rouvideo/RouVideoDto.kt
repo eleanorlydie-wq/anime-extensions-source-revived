@@ -148,8 +148,8 @@ internal object RouVideoDto {
         val likeCount: Int?, // not available in search & relatedVideos
         val duration: Float, // in seconds
         val coverImageUrl: String,
-        val nameZh: String?,
-        val tagZh: List<String>?,
+        val nameZh: String? = null,
+        val tagZh: List<String>? = null,
         val sources: List<Source>?, // not available in details
     ) {
         private val desc = StringBuilder().apply {

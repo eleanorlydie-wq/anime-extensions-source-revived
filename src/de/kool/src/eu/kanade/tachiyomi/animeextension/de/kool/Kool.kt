@@ -18,7 +18,7 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.network.POST
 import keiyoushi.utils.getPreferencesLazy
-import keiyoushi.utils.toJsonRequestBody
+import keiyoushi.utils.toJsonBody
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -118,7 +118,7 @@ class Kool :
                             "enabled": false
                           }
                     }
-                """.toJsonRequestBody(),
+                """.toJsonBody(),
             ),
         ).execute().body.string()
         val jsonData = json.decodeFromString<JsonObject>(mhubjson)
@@ -160,7 +160,7 @@ class Kool :
             },
                   "clientVersion": "1.1.3"
              }
-            """.toJsonRequestBody(),
+            """.toJsonBody(),
         )
     }
 
@@ -215,7 +215,7 @@ class Kool :
                   "episode": {},
                   "clientVersion": "1.1.3"
              }
-            """.toJsonRequestBody(),
+            """.toJsonBody(),
             )
         } else if (anime.url.substringAfter("&type=") == "series") {
             return POST(
@@ -234,7 +234,7 @@ class Kool :
                   "episode": {},
                   "clientVersion": "1.1.3"
              }
-            """.toJsonRequestBody(),
+            """.toJsonBody(),
             )
         } else {
             return POST(
@@ -248,7 +248,7 @@ class Kool :
                   "url": "$baseUrl${anime.url}",
                   "clientVersion": "1.1.3"
              }
-            """.toJsonRequestBody(),
+            """.toJsonBody(),
             )
         }
     }
@@ -327,7 +327,7 @@ class Kool :
                   "episode": {},
                   "clientVersion": "1.1.3"
              }
-            """.toJsonRequestBody(),
+            """.toJsonBody(),
             )
         } else if (type == "series") {
             return POST(
@@ -353,7 +353,7 @@ class Kool :
                   },
                   "clientVersion": "1.1.3"
              }
-            """.toJsonRequestBody(),
+            """.toJsonBody(),
             )
         } else {
             return POST(
@@ -367,7 +367,7 @@ class Kool :
                   "url": "$baseUrl${episode.url.substringAfter("?url=").substringBefore("&type=")}",
                   "clientVersion": "1.1.3"
              }
-            """.toJsonRequestBody(),
+            """.toJsonBody(),
             )
         }
     }
@@ -490,7 +490,7 @@ class Kool :
                     },
                   "clientVersion": "1.1.3"
             }
-            """.toJsonRequestBody(),
+            """.toJsonBody(),
                 )
             }
 
@@ -520,7 +520,7 @@ class Kool :
                     },
                   "clientVersion": "1.1.3"
             }
-            """.toJsonRequestBody(),
+            """.toJsonBody(),
                 )
             }
 
@@ -550,7 +550,7 @@ class Kool :
                     },
                   "clientVersion": "1.1.3"
             }
-            """.toJsonRequestBody(),
+            """.toJsonBody(),
                 )
             }
 
@@ -580,7 +580,7 @@ class Kool :
                     },
                               "clientVersion": "1.1.3"
                             }
-                     """.toJsonRequestBody(),
+                     """.toJsonBody(),
                 )
             }
         }
@@ -680,7 +680,7 @@ class Kool :
                   "episode": {},
                   "clientVersion": "1.1.3"
              }
-            """.toJsonRequestBody(),
+            """.toJsonBody(),
             )
         } else {
             return POST(
@@ -694,7 +694,7 @@ class Kool :
                   "url": "$baseUrl${anime.url}",
                   "clientVersion": "1.1.3"
              }
-            """.toJsonRequestBody(),
+            """.toJsonBody(),
             )
         }
     }

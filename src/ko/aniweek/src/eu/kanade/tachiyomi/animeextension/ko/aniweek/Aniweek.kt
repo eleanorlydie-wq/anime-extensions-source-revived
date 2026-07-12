@@ -210,25 +210,40 @@ class Aniweek :
         val document = response.asJsoup()
 
         val form = document.selectFirst("form.tt") ?: error("Failed to generate form")
-        val postUrl = form.attr("action")
+        val actionUrl = form.attr("action")
+        val hiddenInputs = form.select("input[type=hidden][name][value]")
 
-        val postBody = FormBody.Builder().apply {
-            form.select("input[type=hidden][name][value]").forEach {
-                add(it.attr("name"), it.attr("value"))
-            }
-        }.build()
+        // The site's watch form now submits via GET (with the token as a query param)
+        // rather than POST; honor whatever method the form actually declares.
+        val videoRequest = if (form.attr("method").equals("post", ignoreCase = true)) {
+            val postBody = FormBody.Builder().apply {
+                hiddenInputs.forEach { add(it.attr("name"), it.attr("value")) }
+            }.build()
 
-        val postHeaders = headers.newBuilder().apply {
-            add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
-            add("Content-Type", "application/x-www-form-urlencoded")
-            add("Host", postUrl.toHttpUrl().host)
-            add("Origin", baseUrl)
-            add("Referer", "$baseUrl/")
-        }.build()
+            val postHeaders = headers.newBuilder().apply {
+                add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
+                add("Content-Type", "application/x-www-form-urlencoded")
+                add("Host", actionUrl.toHttpUrl().host)
+                add("Origin", baseUrl)
+                add("Referer", "$baseUrl/")
+            }.build()
 
-        val newDocument = client.newCall(
-            POST(postUrl, body = postBody, headers = postHeaders),
-        ).execute().asJsoup()
+            POST(actionUrl, body = postBody, headers = postHeaders)
+        } else {
+            val getUrl = actionUrl.toHttpUrl().newBuilder().apply {
+                hiddenInputs.forEach { addQueryParameter(it.attr("name"), it.attr("value")) }
+            }.build()
+
+            val getHeaders = headers.newBuilder().apply {
+                add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
+                add("Host", getUrl.host)
+                add("Referer", "$baseUrl/")
+            }.build()
+
+            GET(getUrl.toString(), headers = getHeaders)
+        }
+
+        val newDocument = client.newCall(videoRequest).execute().asJsoup()
 
         val iframeUrl = newDocument.selectFirst("iframe")?.attr("src") ?: error("Failed to extract iframe")
 
