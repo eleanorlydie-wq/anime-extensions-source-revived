@@ -65,8 +65,8 @@ class Kayoanime :
         latestPost = ""
         layout = ""
         settings = ""
-        currentReferer = "https://kayoanime.com/ongoing-animes/"
-        GET("$baseUrl/ongoing-animes/")
+        currentReferer = "https://kayoanime.com/category/ongoing-anime/"
+        GET("$baseUrl/category/ongoing-anime/")
     } else {
         val formBody = FormBody.Builder()
             .add("action", "tie_archives_load_more")
@@ -224,8 +224,8 @@ class Kayoanime :
             "Sub-page",
             arrayOf(
                 Pair("<select>", ""),
-                Pair("Anime Series", "/anime-series/"),
-                Pair("Anime Movie", "/anime-movie/"),
+                Pair("Anime Series", "/category/anime-series/"),
+                Pair("Anime Movie", "/category/anime-movie/"),
             ),
         )
 
@@ -234,21 +234,20 @@ class Kayoanime :
             "Genres",
             arrayOf(
                 Pair("<select>", ""),
-                Pair("Adventure", "/adventure/"),
-                Pair("Comedy", "/comedy/"),
-                Pair("Demons", "/demons/"),
-                Pair("Drama", "/drama/"),
-                Pair("Fantasy", "/fantasy/"),
-                Pair("Mecha", "/mecha/"),
-                Pair("Military", "/military/"),
-                Pair("Romance", "/romance/"),
-                Pair("School", "/school/"),
-                Pair("Sci-Fi", "/sci-fi/"),
-                Pair("Shounen", "/shounen/"),
-                Pair("Slice of Life", "/slice-of-life/"),
-                Pair("Sports", "/sports/"),
-                Pair("Super Power", "/super-power/"),
-                Pair("Supernatural", "/supernatural/"),
+                Pair("Adventure", "/category/adventure/"),
+                Pair("Comedy", "/category/comedy/"),
+                Pair("Demons", "/category/demons/"),
+                Pair("Drama", "/category/drama/"),
+                Pair("Fantasy", "/category/fantasy/"),
+                Pair("Mecha", "/category/mecha/"),
+                Pair("Military", "/category/military/"),
+                Pair("Romance", "/category/romance/"),
+                Pair("School", "/category/school/"),
+                Pair("Sci-Fi", "/category/sci-fi/"),
+                Pair("Shounen", "/category/shounen/"),
+                Pair("Slice of Life", "/category/slice-of-life/"),
+                Pair("Sports", "/category/sports/"),
+                Pair("Super Power", "/category/super-power/"),
             ),
         )
 

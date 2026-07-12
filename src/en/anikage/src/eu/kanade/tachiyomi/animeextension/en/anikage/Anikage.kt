@@ -61,10 +61,8 @@ class Anikage :
             .newBuilder()
         requestUrl.addQueryParameter("page", page.toString())
         requestUrl.addQueryParameter("sort", "popularity")
-        requestUrl.addQueryParameter("per_page", "25")
-        if (preferences.isAdult) {
-            requestUrl.addQueryParameter("include_adult", "true")
-        }
+        requestUrl.addQueryParameter("limit", RESULTS_PER_PAGE.toString())
+        requestUrl.addQueryParameter("adult", preferences.isAdult.toString())
 
         return buildGet(requestUrl.build())
     }
@@ -80,10 +78,10 @@ class Anikage :
         val requestUrl = ANIKAGE_API_URL
             .newBuilder()
         requestUrl.addQueryParameter("page", page.toString())
-        requestUrl.addQueryParameter("per_page", "25")
-        if (query != "") requestUrl.addQueryParameter("query", query)
+        requestUrl.addQueryParameter("limit", RESULTS_PER_PAGE.toString())
+        if (query != "") requestUrl.addQueryParameter("q", query)
         if (searchParams.sortBy.isNotEmpty()) {
-            requestUrl.addQueryParameter("sort", searchParams.sortBy)
+            requestUrl.addQueryParameter("sort", mapSort(searchParams.sortBy))
         }
         if (searchParams.status != "ALL") {
             requestUrl.addQueryParameter("status", searchParams.status)
@@ -98,14 +96,13 @@ class Anikage :
             requestUrl.addQueryParameter("format", searchParams.types)
         }
         if (searchParams.releaseYear != "ALL") {
-            requestUrl.addQueryParameter("seasonYear", searchParams.releaseYear)
+            requestUrl.addQueryParameter("yearMin", searchParams.releaseYear)
+            requestUrl.addQueryParameter("yearMax", searchParams.releaseYear)
         }
         if (searchParams.genres.isNotEmpty()) {
             requestUrl.addQueryParameter("genres", searchParams.genres.joinToString(","))
         }
-        if (preferences.isAdult) {
-            requestUrl.addQueryParameter("include_adult", true.toString())
-        }
+        requestUrl.addQueryParameter("adult", preferences.isAdult.toString())
 
         return buildGet(requestUrl.build())
     }
@@ -117,10 +114,8 @@ class Anikage :
             .newBuilder()
         requestUrl.addQueryParameter("page", page.toString())
         requestUrl.addQueryParameter("sort", "updated")
-        requestUrl.addQueryParameter("per_page", "25")
-        if (preferences.isAdult) {
-            requestUrl.addQueryParameter("include_adult", true.toString())
-        }
+        requestUrl.addQueryParameter("limit", RESULTS_PER_PAGE.toString())
+        requestUrl.addQueryParameter("adult", preferences.isAdult.toString())
 
         return buildGet(requestUrl.build())
     }
@@ -184,7 +179,8 @@ class Anikage :
 
         val episodesData = client.newCall(episodeListRequest(anime))
             .awaitSuccess()
-            .parseAs<List<EpisodeResult>>()
+            .parseAs<EpisodeListResponse>()
+            .episodes
 
         val episode = episodesData.reversed().map {
             SEpisode.create().apply {
@@ -266,11 +262,27 @@ class Anikage :
     private fun String.animeEpisodeBuilder(): String = "$baseUrl/api/media/anime/$this/episodes"
     private fun animeEpisodeUrlFormat(id: String, number: Int): String = "$baseUrl/api/media/anime/$id/episodes/$number/sources"
 
+    // The filter list stores AniList-style sort keys; the browse endpoint
+    // now expects its own short-form sort values instead.
+    private fun mapSort(sort: String): String = when (sort) {
+        "POPULARITY_DESC" -> "popularity"
+        "SCORE_DESC" -> "score"
+        "TRENDING_DESC" -> "trending"
+        "FAVOURITES_DESC" -> "favourites"
+        "START_DATE_DESC" -> "year"
+        "ID_DESC" -> "updated"
+        "TITLE_ENGLISH" -> "title"
+        else -> "popularity"
+    }
+
     private fun parseAnime(response: Response): AnimesPage {
         val jsonData = response.parseAs<AnikageResponse>()
-        val hasNextPage = jsonData.hasNextPage
+        // The browse endpoint no longer reports hasNextPage explicitly; a
+        // full page is treated as a signal that more results may follow,
+        // matching the site's own client-side pagination logic.
+        val hasNextPage = jsonData.data.size >= RESULTS_PER_PAGE
 
-        val animes = jsonData.results.map {
+        val animes = jsonData.data.map {
             val id = it.slug
             val titleFormat = preferences.titleStyle
             val titleName = if (titleFormat == "english") {
@@ -371,8 +383,9 @@ class Anikage :
     companion object {
         private val DATE_FORMAT by lazy { SimpleDateFormat("yyyy-MM-dd", Locale.US) }
 
-        private const val ANIKAGE_API = "https://anikage.cc/api/media/anime/advanced-search"
+        private const val ANIKAGE_API = "https://anikage.cc/api/media/anime/browse"
         private val ANIKAGE_API_URL by lazy { ANIKAGE_API.toHttpUrl() }
+        private const val RESULTS_PER_PAGE = 25
         private const val PREF_ADULT_KEY = "nsfw"
         private const val PREF_ADULT_DEFAULT = false
 
