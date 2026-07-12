@@ -31,7 +31,7 @@ class HentaiZM :
 
     override val name = "HentaiZM"
 
-    override val baseUrl = "https://www.hentaizm6.online"
+    override val baseUrl = "https://www.hentaizm1.com"
 
     override val lang = "tr"
 

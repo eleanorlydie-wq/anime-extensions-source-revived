@@ -27,7 +27,7 @@ class AnimesOnlineVip :
 
     override val name = "Animes Online Vip"
 
-    override val baseUrl = "https://animesonlinefhd.vip"
+    override val baseUrl = "https://animesonline.blue"
 
     override val lang = "pt-BR"
 

@@ -28,7 +28,7 @@ class AnimeLek :
 
     override val name = "AnimeLek"
 
-    override val baseUrl = "https://animelek.me"
+    override val baseUrl = "https://animelek.top"
 
     override val lang = "ar"
 

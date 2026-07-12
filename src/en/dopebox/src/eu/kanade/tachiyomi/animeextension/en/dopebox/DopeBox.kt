@@ -8,7 +8,7 @@ class DopeBox :
         "DopeBox",
         "en",
         BuildConfig.MEGACLOUD_API,
-        listOf("dopebox.to"),
+        listOf("dopebox.sx", "dopebox.to"),
     ) {
     override val id: Long = 787491081765201367
 }
