@@ -174,6 +174,10 @@ class Hstream :
         val data = client.newCall(POST("$baseUrl/player/api", newHeaders, body)).execute()
             .parseAs<PlayerApiResponse>()
 
+        if (data.stream_url == null || data.stream_domains.isNullOrEmpty()) {
+            throw Exception(data.message ?: "Unable to load video, please try again")
+        }
+
         val urlBase = data.stream_domains.random() + "/" + data.stream_url
         val subtitleList = listOf(Track("$urlBase/eng.ass", "English"))
 
@@ -198,8 +202,9 @@ class Hstream :
     data class PlayerApiResponse(
         val legacy: Int = 0,
         val resolution: String = "4k",
-        val stream_url: String,
-        val stream_domains: List<String>,
+        val stream_url: String? = null,
+        val stream_domains: List<String>? = null,
+        val message: String? = null,
     )
 
     override fun videoListSelector(): String = throw UnsupportedOperationException()

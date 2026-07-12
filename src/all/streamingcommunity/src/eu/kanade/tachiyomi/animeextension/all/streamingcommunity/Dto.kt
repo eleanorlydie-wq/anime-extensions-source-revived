@@ -12,6 +12,13 @@ data class ShowsResponse(
     val version: String, // x-inertia-version
 )
 
+// Every Inertia page response (not just archive/browse ones) carries this version,
+// used to fetch just the version without requiring the rest of a page's props shape.
+@Serializable
+data class VersionResponse(
+    val version: String, // x-inertia-version
+)
+
 @Suppress("PropertyName")
 @Serializable
 data class PropObject(

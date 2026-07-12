@@ -53,7 +53,7 @@ class AnimeParadise :
 
     // ============================== Popular ===============================
 
-    override fun popularAnimeRequest(page: Int): Request = GET("$apiUrl/?sort={\"rate\": -1}", apiHeaders)
+    override fun popularAnimeRequest(page: Int): Request = GET("$apiUrl/search?sort={\"rate\": -1}", apiHeaders)
 
     override fun popularAnimeParse(response: Response): AnimesPage {
         val animeList = response.parseAs<AnimeListResponse>().data.map { it.toSAnime(json) }
@@ -62,7 +62,7 @@ class AnimeParadise :
 
     // =============================== Latest ===============================
 
-    override fun latestUpdatesRequest(page: Int): Request = GET("$apiUrl/?sort={\"startDate\": -1 }&type=TV", apiHeaders)
+    override fun latestUpdatesRequest(page: Int): Request = GET("$apiUrl/search?sort={\"startDate\": -1 }&type=TV", apiHeaders)
 
     override fun latestUpdatesParse(response: Response): AnimesPage = popularAnimeParse(response)
 
@@ -74,7 +74,7 @@ class AnimeParadise :
 
         val url = when {
             genreFilter.state != 0 -> apiUrl + genreFilter.toUriPart()
-            else -> "$apiUrl/?title=$query"
+            else -> "$apiUrl/search?title=$query"
         }
 
         return GET(url, headers = apiHeaders)
@@ -94,12 +94,12 @@ class AnimeParadise :
             "Genre",
             arrayOf(
                 Pair("<select>", ""),
-                Pair("Comedy", "/?genre=\"Comedy\""),
-                Pair("Drama", "/?genre=\"Drama\""),
-                Pair("Action", "/?genre=\"Action\""),
-                Pair("Fantasy", "/?genre=\"Fantasy\""),
-                Pair("Supernatural", "/?genre=\"Supernatural\""),
-                Pair("Latest Movie", "/?sort={\"startDate\": -1 }&type=MOVIE"),
+                Pair("Comedy", "/search?genre=\"Comedy\""),
+                Pair("Drama", "/search?genre=\"Drama\""),
+                Pair("Action", "/search?genre=\"Action\""),
+                Pair("Fantasy", "/search?genre=\"Fantasy\""),
+                Pair("Supernatural", "/search?genre=\"Supernatural\""),
+                Pair("Latest Movie", "/search?sort={\"startDate\": -1 }&type=MOVIE"),
             ),
         )
 

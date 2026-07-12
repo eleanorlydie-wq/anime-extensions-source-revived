@@ -33,7 +33,7 @@ class DdosGuardInterceptor(
 
         // Try standard DDoS-Guard bypass first if it's a DDos-Guard 403
         if (isDdosGuard) {
-            val cookies = cookieManager.getCookie(originalRequest.url.toString())
+            val cookies = runCatching { cookieManager.getCookie(originalRequest.url.toString()) }.getOrNull()
             val oldCookie = if (cookies != null && cookies.isNotEmpty()) {
                 cookies.split(";").mapNotNull { Cookie.parse(originalRequest.url, it) }
             } else {
@@ -76,7 +76,7 @@ class DdosGuardInterceptor(
     }
 
     fun getNewCookie(url: HttpUrl): Cookie? {
-        val cookies = cookieManager.getCookie(url.toString())
+        val cookies = runCatching { cookieManager.getCookie(url.toString()) }.getOrNull()
         val oldCookie = if (cookies != null && cookies.isNotEmpty()) {
             cookies.split(";").mapNotNull { Cookie.parse(url, it) }
         } else {
