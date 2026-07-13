@@ -157,13 +157,11 @@ class Animeler :
         }
     }
 
-    private fun kvRow(document: Document, label: String): Element? =
-        document.select("div.adp-hero__kv-row").firstOrNull {
-            it.selectFirst("span.adp-hero__kv-label")?.text() == label
-        }
+    private fun kvRow(document: Document, label: String): Element? = document.select("div.adp-hero__kv-row").firstOrNull {
+        it.selectFirst("span.adp-hero__kv-label")?.text() == label
+    }
 
-    private fun kvValue(document: Document, label: String): String? =
-        kvRow(document, label)?.selectFirst("span.adp-hero__kv-value")?.text()
+    private fun kvValue(document: Document, label: String): String? = kvRow(document, label)?.selectFirst("span.adp-hero__kv-value")?.text()
 
     // ============================== Episodes ==============================
     override fun episodeListParse(response: Response): List<SEpisode> {
