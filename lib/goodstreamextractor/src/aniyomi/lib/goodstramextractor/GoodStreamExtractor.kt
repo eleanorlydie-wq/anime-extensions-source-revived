@@ -12,18 +12,30 @@ class GoodStreamExtractor(private val client: OkHttpClient, private val headers:
         val doc = client.newCall(GET(url, headers)).execute().asJsoup()
         val videos = mutableListOf<Video>()
 
+        // Current player markup (verified live, e.g. goodstream.one/embed-<id>.html):
+        //   jwplayer("vplayer").setup({ ... sources: [{file:"https://hls2.<host>/.../master.m3u8?..."}], ... })
+        // Note there's no space after "file:" and the value isn't comma-terminated (it's followed
+        // by "}]"), and the URL itself can contain uppercase letters/commas (e.g. the
+        // "_,l,n,h,.urlset/" segment), so we scope the match to the `sources:` array specifically
+        // (avoiding the sibling `tracks:`/subtitle `file:` entries) and only require "not a quote".
+        val sourcesRegex = Regex("sources\\s*:\\s*\\[(.*?)]", RegexOption.DOT_MATCHES_ALL)
+        val fileRegex = Regex("file\\s*:\\s*\"([^\"]+)\"")
+
         doc.select("script").forEach { script ->
-            if (script.data().contains(Regex("file|player"))) {
-                val urlRegex = Regex("file: \"(https:\\/\\/[a-z0-9.\\/-_?=&]+)\",")
-                urlRegex.find(script.data())?.groupValues?.get(1)?.let { link ->
-                    videos.add(
-                        Video(
-                            url = link,
-                            quality = name,
-                            videoUrl = link,
-                            headers = headers,
-                        ),
-                    )
+            val data = script.data()
+            if (data.contains("sources")) {
+                sourcesRegex.find(data)?.groupValues?.get(1)?.let { sourcesBlock ->
+                    fileRegex.findAll(sourcesBlock).forEach { match ->
+                        val link = match.groupValues[1]
+                        videos.add(
+                            Video(
+                                url = link,
+                                quality = name,
+                                videoUrl = link,
+                                headers = headers,
+                            ),
+                        )
+                    }
                 }
             }
         }
