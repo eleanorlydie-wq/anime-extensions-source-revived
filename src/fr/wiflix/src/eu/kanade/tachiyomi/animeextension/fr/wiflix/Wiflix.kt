@@ -1,10 +1,12 @@
 package eu.kanade.tachiyomi.animeextension.fr.wiflix
 
 import aniyomi.lib.doodextractor.DoodExtractor
+import aniyomi.lib.luluextractor.LuluExtractor
 import aniyomi.lib.streamdavextractor.StreamDavExtractor
 import aniyomi.lib.upstreamextractor.UpstreamExtractor
 import aniyomi.lib.uqloadextractor.UqloadExtractor
 import aniyomi.lib.vidhideextractor.VidHideExtractor
+import aniyomi.lib.vidmolyextractor.VidMolyExtractor
 import aniyomi.lib.vidoextractor.VidoExtractor
 import aniyomi.lib.voeextractor.VoeExtractor
 import aniyomi.lib.vudeoextractor.VudeoExtractor
@@ -63,9 +65,15 @@ class Wiflix :
 
     override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/serie-en-streaming/page/$page/")
 
+    // Site redesign (flemmix.garden) moved listing items out of `div#dle-content`
+    // into `div#grid div.full-wrap div.mov` — override the shared selector here only.
+    override fun popularAnimeSelector(): String = "div#grid div.mov"
+
     // ============================== Episodes ==============================
 
-    override fun episodeListSelector(): String = ".hostsblock div:has(a[href*=https])"
+    // Site redesign: player links are now `<a onclick="loadVideo('https://host/...')">`
+    // instead of `<a href="...">`.
+    override fun episodeListSelector(): String = ".hostsblock div:has(a[onclick*=https])"
 
     override fun episodeListParse(response: Response): List<SEpisode> = super.episodeListParse(response).sort()
 
@@ -73,7 +81,9 @@ class Wiflix :
         episode_number = element.className().filter { it.isDigit() }.toFloat()
         name = "Episode ${episode_number.toInt()}"
         scanlator = if (element.className().contains("vf")) "VF" else "VOSTFR"
-        url = element.select("a").joinToString(",") { it.attr("href").removePrefix("/vd.php?u=") }
+        url = element.select("a[onclick*=https]").mapNotNull {
+            loadVideoUrlRegex.find(it.attr("onclick"))?.groupValues?.get(1)
+        }.joinToString(",")
     }
 
     // ============================ Video Links =============================
@@ -89,7 +99,12 @@ class Wiflix :
                     contains("streamvid.net") -> VidHideExtractor(client, headers).videosFromUrl(this)
                     contains("upstream.to") -> UpstreamExtractor(client).videosFromUrl(this)
                     contains("streamdav.com") -> StreamDavExtractor(client).videosFromUrl(this)
-                    contains("voe.sx") -> VoeExtractor(client, headers).videosFromUrl(this)
+                    // Site redesign (flemmix.garden) rotated some player domains; hosts below
+                    // were confirmed live under their new domains (site itself labels them
+                    // "Voe", "Vmoly" and "LuLuTV" respectively).
+                    contains("voe.sx") || contains("jessicayeahcatch.com") -> VoeExtractor(client, headers).videosFromUrl(this)
+                    contains("vidmoly.biz") -> VidMolyExtractor(client, headers).videosFromUrl(this)
+                    contains("luluvdo.com") -> LuluExtractor(client, headers).videosFromUrl(this, "")
                     else -> emptyList()
                 }
             }
@@ -103,4 +118,9 @@ class Wiflix :
     override fun videoListSelector(): String = throw UnsupportedOperationException()
 
     override fun videoUrlParse(document: Document): String = throw UnsupportedOperationException()
+
+    companion object {
+        // Matches e.g. onclick="loadVideo('https://vidara.to/e/0XBq0WzSNfID')" / "...', this)"
+        private val loadVideoUrlRegex = Regex("""loadVideo\('(https?://[^']+)'""")
+    }
 }

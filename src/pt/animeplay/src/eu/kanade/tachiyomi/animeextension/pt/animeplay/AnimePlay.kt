@@ -67,12 +67,12 @@ class AnimePlay :
     override val additionalInfoSelector = "div.wp-content"
 
     override fun Document.getDescription(): String = select("$additionalInfoSelector p")
-        .first { !it.text().contains("Título Alternativo") }
+        .firstOrNull { !it.text().contains("Título Alternativo") }
         ?.let { it.text() + "\n" }
         ?: ""
 
     fun Document.getAlternativeTitle(): String = select("$additionalInfoSelector p")
-        .first { it.text().contains("Título Alternativo") }
+        .firstOrNull { it.text().contains("Título Alternativo") }
         ?.let { it.text() + "\n" }
         ?: ""
 

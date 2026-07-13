@@ -37,18 +37,18 @@ class Hentaijk :
 
     private val preferences by getPreferencesLazy()
 
-    override fun popularAnimeSelector(): String = "div.col-lg-12 div.list"
+    override fun popularAnimeSelector(): String = "div.col.toplist"
 
     override fun popularAnimeRequest(page: Int): Request = GET("https://hentaijk.com/top/")
 
     override fun popularAnimeFromElement(element: Element): SAnime {
         val anime = SAnime.create()
         anime.setUrlWithoutDomain(
-            element.select("div#conb a").attr("href"),
+            element.select("div.card > a").attr("href"),
         )
-        anime.title = element.select("div#conb a").attr("title")
-        anime.thumbnail_url = element.select("div#conb a img").attr("src")
-        anime.description = element.select("div#conb div#animinfo p").text()
+        anime.title = element.select("div.card > a h5.card-title").text()
+        anime.thumbnail_url = element.select("div.card > a img.card-img-top").attr("src")
+        anime.description = element.select("div.card > a div.card-synopsis").text()
         return anime
     }
 
@@ -278,16 +278,16 @@ class Hentaijk :
 
     override fun animeDetailsParse(document: Document): SAnime {
         val anime = SAnime.create()
-        anime.thumbnail_url = document.selectFirst("div.col-lg-3 div.anime__details__pic.set-bg")!!.attr("data-setbg")
-        anime.title = document.selectFirst("div.anime__details__text div.anime__details__title h3")!!.text()
-        anime.description = document.selectFirst("div.col-lg-9 div.anime__details__text p")!!.ownText()
-        document.select("div.row div.col-lg-6.col-md-6 ul li").forEach { animeData ->
+        anime.thumbnail_url = document.selectFirst("meta[property=og:image]")?.attr("content")
+        anime.title = document.selectFirst("div.anime_info h3")?.text() ?: ""
+        anime.description = document.selectFirst("div.anime_info p.scroll")?.text()
+        document.select("div.anime_data ul li").forEach { animeData ->
             val data = animeData.select("span").text()
             if (data.contains("Genero")) {
                 anime.genre = animeData.select("a").joinToString { it.text() }
             }
             if (data.contains("Estado")) {
-                anime.status = parseStatus(animeData.select("span").text())
+                anime.status = parseStatus(animeData.text())
             }
             if (data.contains("Studios")) {
                 anime.author = animeData.select("a").text()

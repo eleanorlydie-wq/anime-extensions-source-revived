@@ -42,12 +42,12 @@ class AnimeTake :
     // ============================== Popular ===============================
     override fun popularAnimeRequest(page: Int) = GET("$baseUrl/animelist/popular")
 
-    override fun popularAnimeSelector() = "div.col-sm-6"
+    override fun popularAnimeSelector() = "div.card.component-animelist"
 
     override fun popularAnimeFromElement(element: Element): SAnime = SAnime.create().apply {
-        setUrlWithoutDomain(element.select("div > a").attr("href"))
-        thumbnail_url = baseUrl + element.select("div.latestep_image > img").attr("data-src")
-        title = element.select("span.latestep_title > h4").first()!!.ownText()
+        setUrlWithoutDomain(element.select("a[href]").attr("href"))
+        thumbnail_url = element.select("div.animeposter img").attr("data-src")
+        title = element.select("span.animename").text()
     }
 
     override fun popularAnimeNextPageSelector() = "ul.pagination > li.page-item:last-child"
@@ -91,14 +91,14 @@ class AnimeTake :
     // =========================== Anime Details ============================
     override fun animeDetailsParse(document: Document): SAnime {
         val anime = SAnime.create()
-        anime.title = document.select("h3 > b").text()
-        anime.genre = document.select("a.animeinfo_label").joinToString {
-            it.select("span").text()
-        }
-        anime.description = document.select("div.visible-md").first()!!.ownText()
-        anime.status =
-            parseStatus(document.select("div.well > center:contains(Next Episode)").isNotEmpty())
-        document.select("div.well > p").first()!!.text().let {
+        anime.title = document.select("h2 > b").text()
+        anime.genre = document.select("span.badge-genre").joinToString { it.text() }
+        anime.description = document.select("div.d-none.d-sm-block").firstOrNull()?.ownText().orEmpty()
+        val statusText = document.select("table.table-sm tr")
+            .firstOrNull { it.text().contains("Status:") }
+            ?.select("td")?.last()?.text().orEmpty()
+        anime.status = parseStatus(statusText)
+        document.select("div.alert-upcoming").firstOrNull()?.text()?.let {
             if (it.isBlank().not()) {
                 anime.description = when {
                     anime.description.isNullOrBlank() -> it
@@ -117,12 +117,16 @@ class AnimeTake :
         val episodesLink = document.select(episodeListSelector())
         val episodes = mutableListOf<SEpisode>()
 
-        val specialsDiv = episodesLink.select("div#specials")
+        val specialsDiv = episodesLink.select("div#specials-tab-pane")
         if (specialsDiv.isNotEmpty()) {
-            episodes.addAll(specialsDiv.select("a[href]").map(::episodeFromElement).reversed())
+            episodes.addAll(
+                specialsDiv.select("div.animeinfo > a:has(span.animename)")
+                    .map(::episodeFromElement).reversed(),
+            )
         }
         episodes.addAll(
-            episodesLink.select("div#eps").select("a[href]")
+            episodesLink.select("div#episodes-tab-pane")
+                .select("div.animeinfo > a:has(span.animename)")
                 .map(::episodeFromElement).reversed(),
         )
 
@@ -131,9 +135,9 @@ class AnimeTake :
 
     override fun episodeFromElement(element: Element): SEpisode = SEpisode.create().apply {
         setUrlWithoutDomain(element.attr("href"))
-        val upDate = element.select("div.col-xs-12 > span.front_time").text().trim()
+        val upDate = element.select("span.badge.date").text().trim()
         date_upload = parseDate(upDate)
-        val epName = element.select("div.col-xs-12 > div.anime-title > b").text().trim()
+        val epName = element.select("span.animename").text().trim()
         val epNum = epName.split(" ").last()
         name = epName
         episode_number = epNum.toFloatOrNull() ?: 0F
@@ -218,7 +222,7 @@ class AnimeTake :
             .getOrNull() ?: 0L
     }
 
-    private fun parseStatus(statusBool: Boolean): Int = if (statusBool) {
+    private fun parseStatus(status: String): Int = if (status.contains("Ongoing", ignoreCase = true)) {
         SAnime.ONGOING
     } else {
         SAnime.COMPLETED

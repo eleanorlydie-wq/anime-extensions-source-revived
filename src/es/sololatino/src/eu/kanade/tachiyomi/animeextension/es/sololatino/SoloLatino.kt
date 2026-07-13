@@ -49,9 +49,12 @@ class SoloLatino :
     ) {
 
     // ============================== Popular ===============================
-    override fun popularAnimeRequest(page: Int) = GET("$baseUrl/tendencias/page/$page")
+    // Site migrated off its old WordPress/DooPlay markup to a custom Laravel front-end;
+    // "/tendencias" (trending) no longer exists (404). "/peliculas" is the verified-live
+    // general catalog listing, paginated via "?page=N" with a `<div class="card">` per item.
+    override fun popularAnimeRequest(page: Int) = GET("$baseUrl/peliculas?page=$page")
 
-    override fun popularAnimeSelector() = "article.item"
+    override fun popularAnimeSelector() = "div.movies-grid div.card"
 
     override fun latestUpdatesRequest(page: Int) = GET("$baseUrl/pelicula/estrenos/page/$page", headers)
 
@@ -64,14 +67,15 @@ class SoloLatino :
         val url = element.selectFirst("a")?.attr("href") ?: element.attr("href")
         setUrlWithoutDomain(url)
         title = img.attr("alt")
-        thumbnail_url = img.attr("data-srcset")
+        thumbnail_url = img.attr("src")
     }
 
-    override fun popularAnimeNextPageSelector(): String = "div.pagMovidy a"
+    // New markup exposes pagination as `<a href="..." rel="next">` inside `<nav class="pagination">`.
+    override fun popularAnimeNextPageSelector(): String = "nav.pagination a[rel=next]"
 
     override fun episodeListParse(response: Response): List<SEpisode> {
         val doc = response.useAsJsoup()
-        val seasonList = doc.select("div#seasons div.se-c")
+        val seasonList = doc.select("div[data-season-panel]")
         return if (seasonList.isEmpty()) {
             SEpisode.create().apply {
                 setUrlWithoutDomain(doc.location())
@@ -85,8 +89,8 @@ class SoloLatino :
     }
 
     override fun getSeasonEpisodes(season: Element): List<SEpisode> {
-        val seasonName = season.attr("data-season")
-        return season.select("ul.episodios li").mapNotNull { element ->
+        val seasonName = season.attr("data-season-panel")
+        return season.select("a.ep-item").mapNotNull { element ->
             runCatching {
                 episodeFromElement(element, seasonName)
             }.onFailure { it.printStackTrace() }.getOrNull()
@@ -96,15 +100,17 @@ class SoloLatino :
     override fun episodeFromElement(element: Element): SEpisode = throw UnsupportedOperationException()
 
     override fun episodeFromElement(element: Element, seasonName: String): SEpisode = SEpisode.create().apply {
-        val epNum = element.selectFirst("div.numerando")?.text()
+        val infoParagraphs = element.select("div.flex-1 p")
+        val epNum = element.selectFirst("p.ep-num")?.text()
             ?.trim()
             ?.let { episodeNumberRegex.find(it)?.groupValues?.last() } ?: "0"
 
-        val href = element.selectFirst("a[href]")!!.attr("href")
-        val episodeName = element.selectFirst("div.epst")?.text() ?: "Sin título"
+        val href = element.attr("href")
+        // paragraph order is always [ep-num, title, (optional synopsis), date]
+        val episodeName = infoParagraphs.getOrNull(1)?.text()?.trim()?.takeIf { it.isNotBlank() } ?: "Sin título"
 
         episode_number = epNum.toFloatOrNull() ?: 0F
-        date_upload = element.selectFirst("span.date")?.text().let(dateFormat::tryParse)
+        date_upload = infoParagraphs.lastOrNull()?.text()?.trim().let(episodeDateFormat::tryParse)
 
         name = "T$seasonName - Episodio $epNum: $episodeName"
         setUrlWithoutDomain(href)
@@ -477,32 +483,32 @@ class SoloLatino :
     }
 
     // ============================= Details ================================
-    override val additionalInfoSelector = "#single > div.content > div.wp-content"
-
+    // Site migrated off the old DooPlay "div.sheader" markup. The current detail
+    // page (movie or series template, e.g. https://sololatino.net/pelicula/after
+    // and https://sololatino.net/serie/x-men-97) renders the hero info block as
+    // a single `<div class="flex-1 min-w-0">` sibling of the poster wrapper
+    // `<div class="flex-shrink-0 mx-auto ...">`; the title always lives in the
+    // page's sole `<h1>` (visually hidden via `sr-only` on series pages, but the
+    // text content is identical), genres are `<a href="/genero/...">` links
+    // inside that hero block, and the synopsis is a `<p class="... leading-relaxed ...">`.
     override fun animeDetailsParse(document: Document): SAnime {
         val doc = getRealAnimeDoc(document)
-        val sheader = doc.selectFirst("div.sheader")!!
+        val hero = doc.selectFirst("div.flex-1.min-w-0") ?: doc
         return SAnime.create().apply {
             setUrlWithoutDomain(doc.location())
-            sheader.selectFirst("div.poster > img")!!.let {
+
+            doc.selectFirst("div.flex-shrink-0.mx-auto > img")?.let {
                 thumbnail_url = it.getImageUrl()
-                title = it.attr("alt").ifEmpty {
-                    sheader.selectFirst("div.data > h1")!!.text()
-                }
             }
 
-            genre = sheader.select("div.data > div.sgeneros > a")
+            title = doc.selectFirst("h1")?.text()?.takeIf { it.isNotBlank() }
+                ?: hero.selectFirst("img[alt]")?.attr("alt").orEmpty()
+
+            genre = hero.select("a[href*=/genero/]")
                 .eachText()
                 .joinToString()
 
-            doc.selectFirst(additionalInfoSelector)?.let { info ->
-                description = buildString {
-                    append(doc.getDescription())
-                    additionalInfoItems.forEach {
-                        info.getInfo(it)?.let(::append)
-                    }
-                }
-            }
+            description = hero.selectFirst("p.leading-relaxed")?.text()
         }
     }
 
@@ -549,6 +555,9 @@ class SoloLatino :
     // ============================= Utilities ==============================
 
     private val dateFormat = SimpleDateFormat("MMM. dd, yyyy", Locale.ENGLISH)
+
+    // Episode-item date shown as "27/01/2022" on the current site markup.
+    private val episodeDateFormat = SimpleDateFormat("dd/MM/yyyy", Locale.ENGLISH)
 
     override fun List<Video>.sort(): List<Video> {
         val quality = preferences.getString(prefQualityKey, prefQualityDefault)!!

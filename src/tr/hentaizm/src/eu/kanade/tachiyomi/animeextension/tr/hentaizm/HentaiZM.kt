@@ -11,19 +11,19 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.ParsedAnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
-import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.network.awaitSuccess
 import eu.kanade.tachiyomi.util.asJsoup
 import keiyoushi.utils.getPreferencesLazy
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.withContext
-import okhttp3.FormBody
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
 import okhttp3.Response
+import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
+import uy.kohesive.injekt.injectLazy
 
 class HentaiZM :
     ParsedAnimeHttpSource(),
@@ -42,62 +42,57 @@ class HentaiZM :
         .add("Referer", "$baseUrl/")
 
     private val preferences by getPreferencesLazy()
-
-    init {
-        runBlocking {
-            withContext(Dispatchers.IO) {
-                val body = FormBody.Builder()
-                    .add("user", "demo")
-                    .add("pass", "demo") // peak security
-                    .add("redirect_to", baseUrl)
-                    .build()
-
-                val headers = headersBuilder()
-                    .add("X-Requested-With", "XMLHttpRequest")
-                    .build()
-
-                client.newCall(POST("$baseUrl/giris", headers, body)).execute()
-                    .close()
-            }
-        }
-    }
+    private val json: Json by injectLazy()
 
     // ============================== Popular ===============================
-    override fun popularAnimeRequest(page: Int) = GET("$baseUrl/en-cok-izlenenler/page/$page", headers)
+    // The site redesign moved the "most popular" list to the AJAX endpoint that
+    // backs the "En Çok Favorilere Eklenenler" (most added to favorites) tab.
+    override fun popularAnimeRequest(page: Int) = GET("$baseUrl/api/top_favorites_list.php?page=$page", headers)
 
-    override fun popularAnimeParse(response: Response) = super.popularAnimeParse(response).let { page ->
-        val animes = page.animes.distinctBy { it.url }
-        AnimesPage(animes, page.hasNextPage)
+    override fun popularAnimeParse(response: Response): AnimesPage {
+        val data = json.decodeFromString<HentaiZMApiListDto>(response.body.string())
+        val document = Jsoup.parseBodyFragment(data.html, baseUrl)
+        val animes = document.select(popularAnimeSelector())
+            .map(::popularAnimeFromElement)
+            .distinctBy { it.url }
+        return AnimesPage(animes, data.page < data.totalPages)
     }
 
-    override fun popularAnimeSelector() = "div.moviefilm"
+    override fun popularAnimeSelector() = "div.video-list-item"
 
     override fun popularAnimeFromElement(element: Element) = SAnime.create().apply {
-        title = element.selectFirst("div.movief > a")!!.text()
-            .substringBefore(". Bölüm")
-            .substringBeforeLast(" ")
-        element.selectFirst("img")!!.attr("abs:src").also {
-            thumbnail_url = it
-            val slug = it.substringAfterLast("/").substringBefore(".")
-            setUrlWithoutDomain("/hentai-detay/$slug")
+        val titleLink = element.selectFirst("div.title > a")!!
+        title = titleLink.ownText()
+        setUrlWithoutDomain(titleLink.attr("href"))
+        thumbnail_url = element.selectFirst("div.img img")?.attr("abs:src")
+    }
+
+    override fun popularAnimeNextPageSelector(): String? = null
+
+    // =============================== Latest ===============================
+    // Backed by the "Son Eklenen Bölümler" (recently added episodes) AJAX endpoint.
+    override fun latestUpdatesRequest(page: Int) = GET("$baseUrl/api/episodes_list.php?page=$page", headers)
+
+    override fun latestUpdatesParse(response: Response): AnimesPage {
+        val data = json.decodeFromString<HentaiZMApiListDto>(response.body.string())
+        val document = Jsoup.parseBodyFragment(data.html, baseUrl)
+        val animes = document.select(latestUpdatesSelector())
+            .map(::latestUpdatesFromElement)
+            .distinctBy { it.url }
+        return AnimesPage(animes, data.page < data.totalPages)
+    }
+
+    override fun latestUpdatesSelector() = "div.video-list-item"
+
+    override fun latestUpdatesFromElement(element: Element) = SAnime.create().apply {
+        val animeLink = element.selectFirst("div.details > a.video-name")!!
+        setUrlWithoutDomain(animeLink.attr("href"))
+        element.selectFirst("div.title > a")!!.text().also {
+            title = it.substringBefore(". Bölüm").substringBeforeLast(" ")
         }
     }
 
-    override fun popularAnimeNextPageSelector() = "span.current + a"
-
-    // =============================== Latest ===============================
-    override fun latestUpdatesRequest(page: Int) = GET("$baseUrl/yeni-eklenenler?c=${page - 1}", headers)
-
-    override fun latestUpdatesParse(response: Response) = super.latestUpdatesParse(response).let { page ->
-        val animes = page.animes.distinctBy { it.url }
-        AnimesPage(animes, page.hasNextPage)
-    }
-
-    override fun latestUpdatesSelector() = popularAnimeSelector()
-
-    override fun latestUpdatesFromElement(element: Element) = popularAnimeFromElement(element)
-
-    override fun latestUpdatesNextPageSelector() = "a[rel=next]:contains(Sonraki Sayfa)"
+    override fun latestUpdatesNextPageSelector(): String? = null
 
     // =============================== Search ===============================
     override suspend fun getSearchAnime(page: Int, query: String, filters: AnimeFilterList): AnimesPage {
@@ -113,7 +108,7 @@ class HentaiZM :
 
         if (query.startsWith(PREFIX_SEARCH)) {
             val id = query.removePrefix(PREFIX_SEARCH)
-            return client.newCall(GET("$baseUrl/hentai-detay/$id"))
+            return client.newCall(GET("$baseUrl/anime/$id"))
                 .awaitSuccess()
                 .use(::searchAnimeByIdParse)
         }
@@ -130,34 +125,47 @@ class HentaiZM :
         return AnimesPage(listOf(details), false)
     }
 
-    override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request = GET("$baseUrl/page/$page/?s=$query", headers)
+    // The old full-text-search page (/page/N/?s=) no longer exists; the site now
+    // exposes a single-shot AJAX suggestion endpoint used by the header/sidebar search box.
+    override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request = GET("$baseUrl/api/sidebar_anime_list.php?q=$query", headers)
 
-    override fun searchAnimeParse(response: Response) = popularAnimeParse(response)
+    override fun searchAnimeParse(response: Response): AnimesPage {
+        val data = json.decodeFromString<HentaiZMApiListDto>(response.body.string())
+        val document = Jsoup.parseBodyFragment(data.html, baseUrl)
+        val animes = document.select(searchAnimeSelector())
+            .map(::searchAnimeFromElement)
+            .distinctBy { it.url }
+        return AnimesPage(animes, false)
+    }
 
-    override fun searchAnimeSelector() = throw UnsupportedOperationException()
+    override fun searchAnimeSelector() = "a.sidebar-anime-item"
 
-    override fun searchAnimeFromElement(element: Element) = throw UnsupportedOperationException()
+    override fun searchAnimeFromElement(element: Element) = SAnime.create().apply {
+        title = element.selectFirst("div.text")!!.text()
+        setUrlWithoutDomain(element.attr("href"))
+    }
 
-    override fun searchAnimeNextPageSelector() = null
+    override fun searchAnimeNextPageSelector(): String? = null
 
     // =========================== Anime Details ============================
     override fun animeDetailsParse(document: Document) = SAnime.create().apply {
         setUrlWithoutDomain(document.location())
-        val content = document.selectFirst("div.filmcontent")!!
-        title = content.selectFirst("h1")!!.text()
-        thumbnail_url = content.selectFirst("img")!!.attr("abs:src")
-        genre = content.select("tr:contains(Hentai Türü) > td > a").eachText().joinToString()
-        description = content.selectFirst("tr:contains(Özet) + tr > td")
+        title = document.selectFirst("p.anime-detail-item:contains(Anime Adı:)")!!.ownText().trim()
+        // Poster, genre and synopsis are only rendered for logged-in members on the
+        // current site; anonymous requests get a "please log in" placeholder instead,
+        // so these are left unset (null) rather than scraping that placeholder text.
+        thumbnail_url = document.selectFirst("div.col-md-2 img")?.attr("abs:src")
+        description = document.selectFirst("div.anime-synopsis p")
             ?.text()
-            ?.takeIf(String::isNotBlank)
+            ?.takeIf { it.isNotBlank() && !it.contains("giriş yapmanız") }
     }
 
     // ============================== Episodes ==============================
-    override fun episodeListSelector() = "div#Bolumler li > a"
+    override fun episodeListSelector() = "div.episode-list-container a.episode-list-item"
 
     override fun episodeFromElement(element: Element) = SEpisode.create().apply {
         setUrlWithoutDomain(element.attr("href"))
-        element.text().also {
+        element.selectFirst("div.text")!!.text().also {
             val num = it.substringBeforeLast(". Bölüm", "")
                 .substringAfterLast(" ")
                 .ifBlank { "1" }
@@ -228,3 +236,11 @@ class HentaiZM :
         private val PREF_QUALITY_VALUES = PREF_QUALITY_ENTRIES
     }
 }
+
+@Serializable
+private data class HentaiZMApiListDto(
+    val success: Boolean = false,
+    val html: String = "",
+    val page: Int = 1,
+    @SerialName("total_pages") val totalPages: Int = 1,
+)
