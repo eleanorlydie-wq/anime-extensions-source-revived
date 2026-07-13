@@ -3,7 +3,7 @@ ext {
     extClass = '.Wiflix'
     themePkg = 'datalifeengine'
     baseUrl = 'https://flemmix.garden'
-    overrideVersionCode = 28
+    overrideVersionCode = 29
 }
 
 apply plugin: "kei.plugins.extension.legacy"
@@ -17,4 +17,6 @@ dependencies {
     implementation(project(':lib:vidhideextractor'))
     implementation(project(':lib:upstreamextractor'))
     implementation(project(':lib:voeextractor'))
+    implementation(project(':lib:vidmolyextractor'))
+    implementation(project(':lib:luluextractor'))
 }

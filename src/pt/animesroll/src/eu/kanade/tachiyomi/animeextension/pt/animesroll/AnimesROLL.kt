@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.animeextension.pt.animesroll
 
 import android.util.Log
+import aniyomi.lib.voeextractor.VoeExtractor
 import eu.kanade.tachiyomi.animeextension.pt.animesroll.extractors.AnrollOnlineExtractor
 import eu.kanade.tachiyomi.animeextension.pt.animesroll.extractors.UniversalExtractor
 import eu.kanade.tachiyomi.animesource.model.SAnime
@@ -8,12 +9,8 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.multisrc.dooplay.DooPlay
 import eu.kanade.tachiyomi.network.GET
-import eu.kanade.tachiyomi.network.POST
-import eu.kanade.tachiyomi.network.awaitSuccess
-import keiyoushi.utils.bodyString
 import keiyoushi.utils.parallelCatchingFlatMapBlocking
 import keiyoushi.utils.useAsJsoup
-import okhttp3.FormBody
 import okhttp3.Response
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
@@ -30,11 +27,11 @@ class AnimesROLL :
     override val versionId: Int = 2
 
     // ============================== Popular ===============================
-    override fun popularAnimeSelector() = "div.items.featured article div.poster"
-    override fun popularAnimeRequest(page: Int) = GET("$baseUrl/animes/", headers)
+    override fun popularAnimeSelector() = "div.items article div.poster"
+    override fun popularAnimeRequest(page: Int) = GET("$baseUrl/anime/", headers)
 
     // =============================== Latest ===============================
-    override val latestUpdatesPath = "episodios"
+    override val latestUpdatesPath = "episodio"
 
     // =============================== Search ===============================
     override fun searchAnimeSelector() = "div.result-item article div.thumbnail > a"
@@ -91,7 +88,7 @@ class AnimesROLL :
     // ============================ Video Links =============================
     override fun videoListParse(response: Response): List<Video> {
         val document = response.useAsJsoup()
-        val players = document.select("ul#playeroptionsul li")
+        val players = document.select("div.play-box-iframe div.sa-play-cover[data-src]")
         return players.parallelCatchingFlatMapBlocking(::getPlayerVideos)
     }
 
@@ -100,15 +97,16 @@ class AnimesROLL :
 
     private val anrollOnlineExtractor by lazy { AnrollOnlineExtractor(client) }
     private val universalExtractor by lazy { UniversalExtractor(client) }
+    private val voeExtractor by lazy { VoeExtractor(client, headers) }
 
     private suspend fun getPlayerVideos(player: Element): List<Video> {
-        val fullName = player.selectFirst("span.title")!!.text()
-        val realName = fullName.substringAfter("(").substringBefore(")")
-        val url = getPlayerUrl(player)
+        val url = player.attr("abs:data-src")
+        if (url.isBlank()) return emptyList()
         Log.d(tag, "Fetching videos from: $url")
 
         var videos: List<Video> = when {
-            "anroll.online" in url -> anrollOnlineExtractor.videosFromUrl(url, realName)
+            "anroll.online" in url -> anrollOnlineExtractor.videosFromUrl(url)
+            "voe" in url -> voeExtractor.videosFromUrl(url)
 
             else -> emptyList()
         }
@@ -116,7 +114,7 @@ class AnimesROLL :
         if (videos.isEmpty()) {
             Log.d(tag, "Videos are empty, fetching videos from using universal extractor: $url")
             val newHeaders = headers.newBuilder().set("Referer", baseUrl).build()
-            videos = universalExtractor.videosFromUrl(url, newHeaders, realName)
+            videos = universalExtractor.videosFromUrl(url, newHeaders, null)
         }
 
         if (videos.isEmpty()) {
@@ -124,21 +122,6 @@ class AnimesROLL :
         }
 
         return videos
-    }
-
-    private suspend fun getPlayerUrl(player: Element): String {
-        val body = FormBody.Builder()
-            .add("action", "doo_player_ajax")
-            .add("post", player.attr("data-post"))
-            .add("nume", player.attr("data-nume"))
-            .add("type", player.attr("data-type"))
-            .build()
-
-        return client.newCall(POST("$baseUrl/wp-admin/admin-ajax.php", headers, body))
-            .awaitSuccess().bodyString()
-            .substringAfter("\"embed_url\":\"")
-            .substringBefore("\",")
-            .replace("\\", "")
     }
 
     // ============================== Filters ===============================

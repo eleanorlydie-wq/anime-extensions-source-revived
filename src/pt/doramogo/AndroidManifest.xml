@@ -13,8 +13,8 @@
                 <category android:name="android.intent.category.BROWSABLE" />
 
                 <data
-                    android:host="doramogo.com"
-                    android:pathPattern="/dorama/..*"
+                    android:host="www.doramogo.net"
+                    android:pathPattern="/series/..*"
                     android:scheme="https" />
             </intent-filter>
         </activity>
