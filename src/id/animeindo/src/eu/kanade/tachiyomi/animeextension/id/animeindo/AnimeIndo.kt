@@ -23,6 +23,7 @@ import eu.kanade.tachiyomi.network.GET
 import keiyoushi.utils.tryParse
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
+import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 
 class AnimeIndo :
@@ -68,15 +69,16 @@ class AnimeIndo :
         return GET(url)
     }
 
-    override fun searchAnimeSelector() = "div.animepost > div > a"
+    override fun searchAnimeSelector() = "div.relative.group.overflow-hidden"
 
     override fun searchAnimeFromElement(element: Element) = SAnime.create().apply {
-        setUrlWithoutDomain(element.attr("href"))
-        title = element.selectFirst("div.title")!!.text()
-        thumbnail_url = element.selectFirst("img")!!.getImageUrl()
+        val anchor = element.selectFirst("a")!!
+        setUrlWithoutDomain(anchor.attr("href"))
+        title = element.selectFirst("h3")!!.text()
+        thumbnail_url = element.selectFirst("img")?.getImageUrl()
     }
 
-    override fun searchAnimeNextPageSelector() = "div.pagination a:has(i#nextpagination)"
+    override fun searchAnimeNextPageSelector() = "button[dusk=nextPage]"
 
     // ============================== Filters ===============================
     override val filtersSelector = "div.filtersearch tbody > tr:not(:has(td.filter_title:contains(Search))) > td.filter_act"
@@ -96,6 +98,25 @@ class AnimeIndo :
     }
 
     // =========================== Anime Details ============================
+    // Site was redesigned (Laravel/Livewire + Tailwind); none of the AnimeStream
+    // theme's default selectors (h1.entry-title, div.info-content, div.thumb > img,
+    // .entry-content[itemprop=description], etc.) exist anymore, so the inherited
+    // animeDetailsParse() threw a NullPointerException on every `!!` selectFirst.
+    // Verified against live markup on 2026-07-13, e.g.:
+    //   <h1 class="text-3xl ... line-clamp-1 hidden lg:block">Dragon Ball Daima</h1>
+    //   <meta property="og:image" content="https://image.tmdb.org/t/p/w1280.../x.jpg"/>
+    //   <p class="text-gray-400 mt-3">Mysteriously transformed into mini versions...</p>
+    //   <a href="https://animeindo.skin/genre/comedy" ...>Comedy</a>
+    // No "Status"/"Studio" field exists anywhere on the current detail page.
+    override fun animeDetailsParse(document: Document): SAnime = SAnime.create().apply {
+        setUrlWithoutDomain(document.location())
+        title = document.selectFirst("h1")!!.text()
+        thumbnail_url = document.selectFirst("meta[property=og:image]")?.attr("content")
+        genre = document.select("a[href*=/genre/]").eachText().joinToString()
+        description = document.selectFirst("p.text-gray-400.mt-3")?.text()
+        status = SAnime.UNKNOWN
+    }
+
     override fun parseStatus(statusString: String?): Int = when (statusString?.trim()?.lowercase()) {
         "finished airing" -> SAnime.COMPLETED
         "currently airing" -> SAnime.ONGOING

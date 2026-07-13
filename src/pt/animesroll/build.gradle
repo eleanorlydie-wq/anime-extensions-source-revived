@@ -3,7 +3,7 @@ ext {
     extClass = '.AnimesROLL'
     themePkg = 'dooplay'
     baseUrl = 'https://anroll.plus'
-    overrideVersionCode = 5
+    overrideVersionCode = 7
 }
 
 apply plugin: "kei.plugins.extension.legacy"
@@ -11,4 +11,5 @@ apply plugin: "kei.plugins.extension.legacy"
 dependencies {
     implementation(project(":lib:playlistutils"))
     implementation(project(":lib:unpacker"))
+    implementation(project(":lib:voeextractor"))
 }

@@ -24,15 +24,15 @@ internal object RouVideoDto {
         ) {
             @Serializable
             data class PagePropsObject(
-                val order: String?, // createdAt...
+                val order: String? = null, // createdAt...
                 val videos: List<Video>,
                 val pageNum: Int,
                 val totalPage: Int,
                 val totalVideoNum: Int,
-                val tagsForCNAV: List<TagItem>?,
-                val tags91: List<TagItem>?,
-                val tagsOF: List<TagItem>?, // OnlyFans, only in tag browse
-                val hotSearches: List<String>?, // only in Search
+                val tagsForCNAV: List<TagItem>? = null,
+                val tags91: List<TagItem>? = null,
+                val tagsOF: List<TagItem>? = null, // OnlyFans, only in tag browse
+                val hotSearches: List<String>? = null, // only in Search
             ) {
                 fun toAnimePage(): AnimesPage = AnimesPage(
                     videos.map { video -> video.toSAnime() },
@@ -138,19 +138,19 @@ internal object RouVideoDto {
     data class Video(
         val id: String,
         @SerialName("vid")
-        val code: String?,
+        val code: String? = null,
         val name: String,
-        val description: String?,
-        val ref: String?,
+        val description: String? = null,
+        val ref: String? = null,
         val tags: List<String>,
         val createdAt: String, // "2025-01-14T23:18:27.933Z"
         val viewCount: Int,
-        val likeCount: Int?, // not available in search & relatedVideos
+        val likeCount: Int? = null, // not available in search & relatedVideos
         val duration: Float, // in seconds
         val coverImageUrl: String,
         val nameZh: String? = null,
         val tagZh: List<String>? = null,
-        val sources: List<Source>?, // not available in details
+        val sources: List<Source>? = null, // not available in details
     ) {
         private val desc = StringBuilder().apply {
             sources?.firstOrNull()?.let { append("${resolutionDesc(it.resolution.toString())}\n") }
@@ -269,10 +269,10 @@ internal object RouVideoDto {
     /* Not available in details */
     @Serializable
     data class Source(
-        val id: String?, // not available in relatedVideos
-        val videoId: String?, // not available in relatedVideos
+        val id: String? = null, // not available in relatedVideos
+        val videoId: String? = null, // not available in relatedVideos
         val resolution: Int,
-        val folder: String?, // not available in relatedVideos
+        val folder: String? = null, // not available in relatedVideos
     )
 
     private val DATE_FORMATTER by lazy {

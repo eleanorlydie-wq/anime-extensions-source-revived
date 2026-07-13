@@ -12,9 +12,14 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.ParsedAnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.awaitSuccess
+import keiyoushi.utils.extractNextJs
 import keiyoushi.utils.getPreferencesLazy
 import keiyoushi.utils.parallelCatchingFlatMapBlocking
+import keiyoushi.utils.parseAs
 import keiyoushi.utils.useAsJsoup
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
 import okhttp3.Response
@@ -40,26 +45,31 @@ class AnimesOnlineVip :
         .add("Origin", baseUrl)
 
     // ============================== Popular ===============================
-    override fun popularAnimeRequest(page: Int) = GET("$baseUrl/top-100", headers)
+    // The site no longer has a dedicated "top 100" or "popular" listing (confirmed via
+    // sitemap.xml: only /, /home, /animes, /dublado, /legendado, /generos, /letra/* exist).
+    // /animes is the full catalog with real ?page= pagination, so it is used for both
+    // popular and latest.
+    override fun popularAnimeRequest(page: Int) = GET("$baseUrl/animes?page=$page", headers)
 
-    override fun popularAnimeSelector() = "a.top100Item"
+    override fun popularAnimeSelector() = "a.block[href^=/anime/]"
 
     override fun popularAnimeFromElement(element: Element) = SAnime.create().apply {
         setUrlWithoutDomain(element.attr("href"))
-        title = element.attr("title")
-        thumbnail_url = element.selectFirst("img")?.attr("src")
+        title = element.selectFirst("h3")?.text()
+            ?: element.selectFirst("img")?.attr("alt").orEmpty()
+        thumbnail_url = element.selectFirst("img")?.attr("src")?.let(::extractNextImageUrl)
     }
 
-    override fun popularAnimeNextPageSelector() = null
+    override fun popularAnimeNextPageSelector() = "a:contains(Próximo)"
 
     // =============================== Latest ===============================
-    override fun latestUpdatesRequest(page: Int) = GET("$baseUrl/page/$page", headers)
+    override fun latestUpdatesRequest(page: Int) = popularAnimeRequest(page)
 
-    override fun latestUpdatesSelector() = "div.videos div.video div.video-thumb a"
+    override fun latestUpdatesSelector() = popularAnimeSelector()
 
     override fun latestUpdatesFromElement(element: Element) = popularAnimeFromElement(element)
 
-    override fun latestUpdatesNextPageSelector() = "ul.paginacao li.next"
+    override fun latestUpdatesNextPageSelector() = popularAnimeNextPageSelector()
 
     // =============================== Search ===============================
     override suspend fun getSearchAnime(
@@ -100,68 +110,79 @@ class AnimesOnlineVip :
         return AnimesPage(listOf(details), false)
     }
 
+    // The site's search endpoint is /buscar?q=<term>; it doesn't appear to paginate
+    // (page=2 returned byte-identical results to page=1 in testing), so `page` is unused.
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
-        val url = "$baseUrl/page".toHttpUrl().newBuilder()
-            .addPathSegment(page.toString())
-            .addQueryParameter("s", query)
+        val url = "$baseUrl/buscar".toHttpUrl().newBuilder()
+            .addQueryParameter("q", query)
             .build()
 
         return GET(url, headers = headers)
     }
 
-    override fun searchAnimeSelector() = latestUpdatesSelector()
+    override fun searchAnimeSelector() = popularAnimeSelector()
 
-    override fun searchAnimeFromElement(element: Element) = latestUpdatesFromElement(element)
+    override fun searchAnimeFromElement(element: Element) = popularAnimeFromElement(element)
 
-    override fun searchAnimeNextPageSelector() = latestUpdatesNextPageSelector()
+    override fun searchAnimeNextPageSelector() = popularAnimeNextPageSelector()
 
     // =========================== Anime Details ============================
     override fun animeDetailsParse(document: Document): SAnime {
-        val doc = getRealDoc(document)
+        val details = document.extractNextJs<AODetailsDto>(isAnimeDetailsPayload)
 
         return SAnime.create().apply {
-            setUrlWithoutDomain(doc.location())
-            title = doc.selectFirst("div.pagina-titulo h1")!!.text().trim()
-            thumbnail_url = doc.selectFirst("div.post-capa img")?.attr("src")
-            description = doc.selectFirst("ul.post-infos p")?.text()
-            genre = doc.select("ul.post-infos li a").eachText().joinToString(", ")
+            setUrlWithoutDomain(document.location())
+            if (details != null) {
+                title = details.title
+                thumbnail_url = details.cover
+                description = details.synopsis
+                genre = details.genres.joinToString(", ") { it.name }
+            } else {
+                title = document.selectFirst("h1")?.text().orEmpty()
+            }
         }
     }
 
     // ============================== Episodes ==============================
-    override fun episodeListParse(response: Response): List<SEpisode> = getRealDoc(response.useAsJsoup())
-        .select(episodeListSelector())
-        .map(::episodeFromElement)
-        .reversed()
+    // The full episode list (including any per-episode title/thumbnail) is only available
+    // one-at-a-time from /api/episodio/<id>, which the site itself only calls lazily when a
+    // user opens an episode (confirmed in the compiled JS: `fetch(`/api/episodio/${e.id}`)`).
+    // The anime details payload does embed the ordered list of episode ids upfront though, so
+    // the episode list is built from that without needing 1 HTTP request per episode; the id
+    // is encoded directly into the episode url so that the default videoListRequest
+    // (GET(baseUrl + episode.url)) hits the API endpoint directly.
+    override fun episodeListParse(response: Response): List<SEpisode> {
+        val details = response.extractNextJs<AODetailsDto>(isAnimeDetailsPayload) ?: return emptyList()
 
-    override fun episodeListSelector() = "ul.episodios li a"
-
-    override fun episodeFromElement(element: Element) = SEpisode.create().apply {
-        setUrlWithoutDomain(element.attr("href"))
-        name = element.attr("title")
-            .substringAfterLast("–").trim()
-        episode_number = element.selectFirst("div.listaEpInfosEp span:eq(0)")
-            ?.text()
-            ?.substringAfter(":")
-            ?.toFloatOrNull() ?: 1F
+        return details.episodeIds.mapIndexed { index, id ->
+            SEpisode.create().apply {
+                url = "/api/episodio/$id"
+                episode_number = (index + 1).toFloat()
+                name = "Episódio ${index + 1}"
+            }
+        }.reversed()
     }
+
+    override fun episodeListSelector() = throw UnsupportedOperationException()
+
+    override fun episodeFromElement(element: Element) = throw UnsupportedOperationException()
 
     // ============================ Video Links =============================
     override fun videoListParse(response: Response): List<Video> {
-        val document = response.useAsJsoup()
+        val episode = response.parseAs<AOEpisodeDto>()
 
-        return document.select("#video source,div.post-video iframe")
-            .parallelCatchingFlatMapBlocking {
-                getVideosFromURL(it.attr("src"))
-            }
+        return listOfNotNull(episode.playerUrl, episode.embed)
+            .filter(String::isNotBlank)
+            .distinct()
+            .parallelCatchingFlatMapBlocking { getVideosFromURL(it, episode.tipo) }
     }
 
     private val bloggerExtractor by lazy { BloggerExtractor(client) }
 
-    private suspend fun getVideosFromURL(url: String): List<Video> = when {
-        "assistonapi.link" in url -> bloggerExtractor.videosFromUrl(url, headers)
+    private suspend fun getVideosFromURL(url: String, tipo: String?): List<Video> = when {
+        "blogger.com" in url -> bloggerExtractor.videosFromUrl(url, headers, suffix = tipo.orEmpty())
         else -> listOf(
-            Video(url, "Default", videoUrl = url, headers),
+            Video(url, "Default ${tipo.orEmpty()}".trim(), videoUrl = url, headers),
         )
     }
 
@@ -194,16 +215,42 @@ class AnimesOnlineVip :
     }
 
     // ============================= Utilities ==============================
-    private fun getRealDoc(document: Document): Document {
-        val menu = document.selectFirst("div.post-botoes ul li a i.fa-bars")
-        if (menu != null) {
-            val originalUrl = menu.parent()!!.attr("href")
-            val response = client.newCall(GET(originalUrl, headers)).execute()
-            return response.useAsJsoup()
-        }
-
-        return document
+    // Anime/latest/search cards use next/image, e.g.
+    // src="/_next/image?url=https%3A%2F%2Fanimesonline.blue%2Fwp-content%2Fuploads%2F...webp&w=3840&q=75"
+    // Unwrap the proxy to get the direct image url.
+    private fun extractNextImageUrl(src: String): String {
+        val absolute = if (src.startsWith("http")) src else "$baseUrl$src"
+        return runCatching { absolute.toHttpUrl().queryParameter("url") }.getOrNull() ?: absolute
     }
+
+    // `episodeIds` (and every other field besides slug/title) carries a default value so that
+    // a MissingFieldException never breaks parsing if the upstream payload drops a field, but
+    // that also makes kotlinx.serialization treat it as "optional" - which would make the
+    // reified/inferred extractNextJs predicate match on {slug, title} alone. That pair is too
+    // generic (risk of matching an unrelated nested object), so match on `episodeIds` explicitly,
+    // the field literally seen in the fetched payload: "...\"episodeIds\":[7803,7806,7809,...".
+    private val isAnimeDetailsPayload: (JsonElement) -> Boolean = { it is JsonObject && "episodeIds" in it }
+
+    @Serializable
+    class AODetailsDto(
+        val title: String = "",
+        val cover: String? = null,
+        val synopsis: String? = null,
+        val genres: List<AOGenreDto> = emptyList(),
+        val episodeIds: List<Long> = emptyList(),
+    )
+
+    @Serializable
+    class AOGenreDto(
+        val name: String,
+    )
+
+    @Serializable
+    class AOEpisodeDto(
+        val tipo: String? = null,
+        val playerUrl: String? = null,
+        val embed: String? = null,
+    )
 
     companion object {
         const val PREFIX_SEARCH = "path:"

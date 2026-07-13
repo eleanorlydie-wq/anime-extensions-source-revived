@@ -37,20 +37,25 @@ class Doramogo : ParsedAnimeHttpSource() {
         .add("Origin", baseUrl)
 
     // ============================== Popular ===============================
-    override fun popularAnimeRequest(page: Int) = GET("$baseUrl/doramas/?filter_order=popular", headers)
+    override fun popularAnimeRequest(page: Int): Request {
+        val url = if (page > 1) "$baseUrl/dorama/pagina/$page" else "$baseUrl/dorama"
+        return GET(url, headers)
+    }
 
-    override fun popularAnimeSelector() = "div.item-drm"
+    override fun popularAnimeSelector() = "div.episode-card"
 
     override fun popularAnimeFromElement(element: Element) = SAnime.create().apply {
         setUrlWithoutDomain(element.selectFirst("a")!!.attr("href"))
-        title = element.selectFirst("div.title h3")!!.text()
-        thumbnail_url = element.selectFirst("div.cover > img")!!.attr("src")
+        title = element.selectFirst("div.episode-info h3")!!.text()
+        thumbnail_url = element.selectFirst("img")!!.attr("abs:src")
     }
 
-    override fun popularAnimeNextPageSelector() = null
+    override fun popularAnimeNextPageSelector() = "a.next-btn"
 
     // =============================== Latest ===============================
-    override fun latestUpdatesRequest(page: Int) = GET("$baseUrl/doramas/?filter_orderby=date", headers)
+    // The rebuilt site (2026) no longer exposes a separate "latest" ordering,
+    // so latest updates reuses the same listing as popular.
+    override fun latestUpdatesRequest(page: Int) = popularAnimeRequest(page)
 
     override fun latestUpdatesSelector() = popularAnimeSelector()
 
@@ -72,7 +77,7 @@ class Doramogo : ParsedAnimeHttpSource() {
 
         if (query.startsWith(PREFIX_SEARCH)) {
             val id = query.removePrefix(PREFIX_SEARCH)
-            return client.newCall(GET("$baseUrl/dorama/$id"))
+            return client.newCall(GET("$baseUrl/series/$id"))
                 .awaitSuccess()
                 .use(::searchAnimeByIdParse)
         }
@@ -112,34 +117,81 @@ class Doramogo : ParsedAnimeHttpSource() {
     // =========================== Anime Details ============================
     override fun animeDetailsParse(document: Document) = SAnime.create().apply {
         setUrlWithoutDomain(document.location())
-        title = document.selectFirst("div.dados h1")!!.text()
-        thumbnail_url = document.select("div.image--cover").attr("style")
-            .substringAfter("background-image: url('").substringBefore("')")
-        description = document.selectFirst("p.readMor")!!.textNodes().joinToString("")
+        title = document.selectFirst("div.detail h1")!!.text()
+        thumbnail_url = document.selectFirst("div.thumbnail img")!!.attr("abs:src")
+        description = document.selectFirst("p#sinopse-text")?.text()
     }
 
     // ============================== Episodes ==============================
     override fun episodeListParse(response: Response): List<SEpisode> = super.episodeListParse(response).reversed()
 
-    override fun episodeListSelector() = "li.episode--content"
+    override fun episodeListSelector() = "a.dorama-one-episode-item"
 
     override fun episodeFromElement(element: Element) = SEpisode.create().apply {
-        setUrlWithoutDomain(element.selectFirst("a")!!.attr("href"))
-        element.selectFirst("div.title-episode a")!!.textNodes().joinToString("").let {
-            name = it.substringAfter(". ")
-            episode_number = it.substringBefore(". ").toFloatOrNull() ?: 1F
-        }
+        setUrlWithoutDomain(element.attr("href"))
+        name = element.selectFirst("span.episode-title")?.text()?.trim()
+            ?: element.selectFirst("span.dorama-one-episode-number")!!.text()
+        val number = element.selectFirst("span.dorama-one-episode-number")?.text().orEmpty()
+        episode_number = Regex("\\d+").find(number)?.value?.toFloatOrNull() ?: 1F
     }
 
     // ============================ Video Links =============================
     override fun videoListParse(response: Response): List<Video> {
         val document = response.asJsoup()
 
-        val urls = document.select("div.source-box iframe[src]").map {
-            it.attr("src")
+        // Legacy embed-based episodes (kept for any content still served this way).
+        val iframeUrls = document.select("div.source-box iframe[src]").map { it.attr("src") }
+        if (iframeUrls.isNotEmpty()) {
+            return iframeUrls.catchingFlatMapBlocking { getVideosFromURL(it) }
         }
 
-        return urls.catchingFlatMapBlocking { getVideosFromURL(it) }
+        // Current site (2026 rebuild): episode pages embed a JWPlayer instance whose
+        // stream path is built from an inline `urlConfig` object, e.g.:
+        //   var urlConfig = { base: "...", slug: "meu-namorado-coreano-2025",
+        //                      tipo: "doramas", temporada: 1, episodio: 1 };
+        //   const PRIMARY_URL = "https://ondemand.telabrasil.shop";
+        //   const FALLBACK_URL = "https://forks-doramas.telabrasil.shop";
+        // and the client falls back from PRIMARY_URL to FALLBACK_URL on failure.
+        return videosFromPlayerConfig(document)
+    }
+
+    private fun videosFromPlayerConfig(document: Document): List<Video> {
+        val script = document.select("script:containsData(urlConfig)").firstOrNull()?.data()
+            ?: return emptyList()
+
+        val slug = Regex("slug:\\s*\"([^\"]+)\"").find(script)?.groupValues?.get(1) ?: return emptyList()
+        val tipo = Regex("tipo:\\s*\"([^\"]+)\"").find(script)?.groupValues?.get(1) ?: return emptyList()
+        val temporada = Regex("temporada:\\s*(\\d+)").find(script)?.groupValues?.get(1)
+        val episodio = Regex("episodio:\\s*(\\d+)").find(script)?.groupValues?.get(1)
+        val primaryBase = Regex("PRIMARY_URL\\s*=\\s*\"([^\"]+)\"").find(script)?.groupValues?.get(1)
+        val fallbackBase = Regex("FALLBACK_URL\\s*=\\s*\"([^\"]+)\"").find(script)?.groupValues?.get(1)
+
+        val prefix = slug.first().uppercaseChar()
+        val streamPath = if (tipo == "filmes") {
+            "$prefix/$slug/stream/stream.m3u8"
+        } else {
+            val t = (temporada ?: "1").padStart(2, '0')
+            val e = (episodio ?: "1").padStart(2, '0')
+            "$prefix/$slug/$t-temporada/$e/stream.m3u8"
+        }
+
+        // Mirrors the site's own client-side fallback: try the primary CDN first,
+        // then the fallback CDN if the primary stream isn't reachable/valid.
+        for (base in listOfNotNull(primaryBase, fallbackBase).distinct()) {
+            val streamUrl = "$base/$streamPath?nocache=${System.currentTimeMillis()}"
+
+            val isPlayableM3u8 = runCatching {
+                client.newCall(GET(streamUrl, headers)).execute().use { res ->
+                    res.isSuccessful && res.peekBody(15L).string().contains("#EXTM3U")
+                }
+            }.getOrDefault(false)
+
+            if (isPlayableM3u8) {
+                return playlistUtils.extractFromHls(streamUrl, referer = baseUrl, videoNameGen = { "Doramogo" })
+            }
+        }
+
+        return emptyList()
     }
 
     private val dailymotionExtractor by lazy { DailymotionExtractor(client, headers) }

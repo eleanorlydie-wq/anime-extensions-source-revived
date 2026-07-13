@@ -125,14 +125,13 @@ class Hstream :
     override fun animeDetailsParse(document: Document) = SAnime.create().apply {
         status = SAnime.COMPLETED
 
-        val floatleft = document.selectFirst("div.relative > div.justify-between > div")!!
-        title = floatleft.selectFirst("div > h1")!!.text()
-        artist = floatleft.select("div > a:nth-of-type(3)").text()
+        title = document.selectFirst("h1")!!.text()
+        artist = document.selectFirst("a[href*=studios]")?.text() ?: ""
 
-        thumbnail_url = document.selectFirst("div.float-left > img.object-cover")?.absUrl("src")
-        genre = document.select("ul.list-none > li > a").eachText().joinToString()
+        thumbnail_url = document.selectFirst("div.hidden.shrink-0 img")?.absUrl("src")
+        genre = document.select("h2:contains(Genres) + div a").eachText().joinToString()
 
-        description = document.selectFirst("div.relative > p.leading-tight")?.text()
+        description = document.selectFirst("p.leading-relaxed")?.text()
     }
 
     // ============================== Episodes ==============================
