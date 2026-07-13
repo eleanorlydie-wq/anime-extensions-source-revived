@@ -38,7 +38,7 @@ class Myanime :
 
     // ============================== Popular ===============================
 
-    override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/category/donghua-list/page/$page/")
+    override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/category/anime/page/$page/")
 
     override fun popularAnimeSelector(): String = "main#main > article.post"
 

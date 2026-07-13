@@ -14,16 +14,15 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.ParsedAnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
-import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.util.asJsoup
 import keiyoushi.utils.getPreferencesLazy
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import okhttp3.FormBody
-import okhttp3.Headers
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
 import okhttp3.Response
 import org.jsoup.nodes.Document
@@ -51,7 +50,10 @@ class Serienstream :
     private val json: Json by injectLazy()
 
     // ===== POPULAR ANIME =====
-    override fun popularAnimeSelector(): String = "div.seriesListContainer div"
+    // Site redesign (2026): cards are now `a.show-card` (no more h3 title, no
+    // `div.seriesListContainer`); the title lives in the `<img alt>` and the
+    // image is lazy-loaded via `data-src` (eager cards just use `src`).
+    override fun popularAnimeSelector(): String = "a.show-card"
 
     override fun popularAnimeNextPageSelector(): String? = null
 
@@ -59,45 +61,41 @@ class Serienstream :
 
     override fun popularAnimeFromElement(element: Element): SAnime {
         val anime = SAnime.create()
-        val linkElement = element.selectFirst("a")!!
-        anime.url = linkElement.attr("href")
-        anime.thumbnail_url = baseUrl + linkElement.selectFirst("img")!!.attr("data-src")
-        anime.title = element.selectFirst("h3")!!.text()
+        anime.url = element.attr("href")
+        val img = element.selectFirst("img")!!
+        anime.thumbnail_url = baseUrl + img.attr("data-src").ifBlank { img.attr("src") }
+        anime.title = img.attr("alt")
         return anime
     }
 
     // ===== LATEST ANIME =====
-    override fun latestUpdatesSelector(): String = "div.seriesListContainer div"
+    // `/neu` is gone; the equivalent page is now `/neue-episoden`, a flat table
+    // of recently added episodes (date/day/series/season/episode/language),
+    // with no thumbnail per row.
+    override fun latestUpdatesSelector(): String = "table.new-episodes-table tbody tr"
 
     override fun latestUpdatesNextPageSelector(): String? = null
 
-    override fun latestUpdatesRequest(page: Int): Request = GET("$baseUrl/neu")
+    override fun latestUpdatesRequest(page: Int): Request = GET("$baseUrl/neue-episoden")
 
     override fun latestUpdatesFromElement(element: Element): SAnime {
         val anime = SAnime.create()
-        val linkElement = element.selectFirst("a")!!
-        anime.url = linkElement.attr("href")
-        anime.thumbnail_url = baseUrl + linkElement.selectFirst("img")!!.attr("data-src")
-        anime.title = element.selectFirst("h3")!!.text()
+        val linkElement = element.selectFirst("td a")!!
+        anime.url = linkElement.attr("href").substringBefore("/staffel-")
+        anime.title = linkElement.text()
         return anime
     }
 
     // ===== SEARCH =====
-
+    // `/ajax/search` (POST, `keyword`) is gone -> 404 "The route ajax/search
+    // could not be found." The site's own search modal now calls
+    // `GET /api/search/suggest?term=<query>`, returning
+    // `{"shows":[{"name":...,"url":...}],"people":[...],"genres":[...]}`.
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
-        val headers = Headers.Builder()
-            .add("Referer", "http://186.2.175.5/search")
-            .add("origin", baseUrl)
-            .add("connection", "keep-alive")
-            .add("user-agent", "Mozilla/5.0 (Linux; Android 12; Pixel 5 Build/SP2A.220405.004; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/100.0.4896.127 Safari/537.36")
-            .add("Upgrade-Insecure-Requests", "1")
-            .add("content-length", query.length.plus(8).toString())
-            .add("cache-control", "")
-            .add("accept", "*/*")
-            .add("content-type", "application/x-www-form-urlencoded; charset=UTF-8")
-            .add("x-requested-with", "XMLHttpRequest")
+        val url = "$baseUrl/api/search/suggest".toHttpUrl().newBuilder()
+            .addQueryParameter("term", query)
             .build()
-        return POST("$baseUrl/ajax/search", body = FormBody.Builder().add("keyword", query).build(), headers = headers)
+        return GET(url)
     }
     override fun searchAnimeSelector() = throw UnsupportedOperationException()
 
@@ -105,24 +103,19 @@ class Serienstream :
 
     override fun searchAnimeParse(response: Response): AnimesPage {
         val body = response.body.string()
-        val results = json.decodeFromString<JsonArray>(body)
-        val animes = results.filter {
-            val link = it.jsonObject["link"]!!.jsonPrimitive.content
-            link.startsWith("/serie/stream/") &&
-                link.count { c -> c == '/' } == 3
-        }.map {
-            animeFromSearch(it.jsonObject)
-        }
+        val results = json.decodeFromString<JsonObject>(body)
+        val shows = results["shows"]?.jsonArray ?: JsonArray(emptyList())
+        val animes = shows.map { animeFromSearch(it.jsonObject) }
         return AnimesPage(animes, false)
     }
 
     private fun animeFromSearch(result: JsonObject): SAnime {
         val anime = SAnime.create()
-        val title = result["title"]!!.jsonPrimitive.content
-        val link = result["link"]!!.jsonPrimitive.content
-        anime.title = title.replace("<em>", "").replace("</em>", "")
+        val title = result["name"]!!.jsonPrimitive.content
+        val link = result["url"]!!.jsonPrimitive.content
+        anime.title = title
         val thumpage = client.newCall(GET("$baseUrl$link")).execute().asJsoup()
-        anime.thumbnail_url = baseUrl + thumpage.selectFirst("div.seriesCoverBox img")!!.attr("data-src")
+        anime.thumbnail_url = baseUrl + thumpage.selectFirst("div.show-cover-mobile img")!!.attr("data-src")
         anime.url = link
         return anime
     }
@@ -132,68 +125,60 @@ class Serienstream :
     // ===== ANIME DETAILS =====
     override fun animeDetailsParse(document: Document): SAnime {
         val anime = SAnime.create()
-        anime.title = document.selectFirst("div.series-title h1 span")!!.text()
-        anime.thumbnail_url = baseUrl + document.selectFirst("div.seriesCoverBox img")!!.attr("data-src")
-        anime.genre = document.select("div.genres ul li").joinToString { it.text() }
-        anime.description = document.selectFirst("p.seri_des")!!.attr("data-full-description")
-        document.selectFirst("div.cast li:contains(Produzent:) ul")?.let {
-            val author = it.select("li").joinToString { li -> li.text() }
-            anime.author = author
+        // Site redesign (2026): no more `div.series-title`/`div.seriesCoverBox`/
+        // `div.genres`/`p.seri_des`/`div.cast` - replaced by a plain `<h1>`, a
+        // `div.show-cover-mobile img[data-src]`, `<li class="series-group">`
+        // label/value pairs (Regisseur/Produzent/Besetzung/Land/Genre), and a
+        // `div.series-description span.description-text`.
+        anime.title = document.selectFirst("h1")!!.text()
+        document.selectFirst("div.show-cover-mobile img")?.let {
+            anime.thumbnail_url = baseUrl + it.attr("data-src")
+        }
+        anime.genre = document.select("li.series-group:contains(Genre:) a").joinToString { it.text() }
+        anime.description = document.selectFirst("div.series-description span.description-text")?.text()
+        document.selectFirst("li.series-group:contains(Produzent:)")?.let {
+            anime.author = it.select("a").joinToString { a -> a.text() }
         }
         anime.status = SAnime.UNKNOWN
         return anime
     }
 
     // ===== EPISODE =====
+    // The old `#stream > ul` season nav + `table.seasonEpisodesList` are gone.
+    // Seasons are now listed as `#season-nav a[data-season-pill]`, and each
+    // season page lists its episodes as `tr.episode-row` (number in
+    // `th.episode-number-cell`, German title in `strong.episode-title-ger`,
+    // and the episode URL only available via the row's `onclick` handler,
+    // e.g. onclick="window.location='/serie/all-american/staffel-1/episode-1'").
     override fun episodeListSelector() = throw UnsupportedOperationException()
 
     override fun episodeListParse(response: Response): List<SEpisode> {
         val document = response.asJsoup()
         val episodeList = mutableListOf<SEpisode>()
-        val seasonsElements = document.select("#stream > ul:nth-child(1) > li > a")
-        if (seasonsElements.attr("href").contains("/filme")) {
-            seasonsElements.forEach {
-                val seasonEpList = parseMoviesFromSeries(it)
-                episodeList.addAll(seasonEpList)
-            }
-        } else {
-            seasonsElements.forEach {
-                val seasonEpList = parseEpisodesFromSeries(it)
-                episodeList.addAll(seasonEpList)
-            }
+        val seasonsElements = document.select("#season-nav a[data-season-pill]")
+        seasonsElements.forEach {
+            episodeList.addAll(parseEpisodesFromSeries(it))
         }
         return episodeList.reversed()
     }
 
     private fun parseEpisodesFromSeries(element: Element): List<SEpisode> {
+        val seasonNum = element.attr("data-season-pill")
         val seasonId = element.attr("abs:href")
         val episodesHtml = client.newCall(GET(seasonId)).execute().asJsoup()
-        val episodeElements = episodesHtml.select("table.seasonEpisodesList tbody tr")
-        return episodeElements.map { episodeFromElement(it) }
+        val episodeElements = episodesHtml.select("tr.episode-row")
+        return episodeElements.map { episodeFromRow(it, seasonNum) }
     }
 
-    private fun parseMoviesFromSeries(element: Element): List<SEpisode> {
-        val seasonId = element.attr("abs:href")
-        val episodesHtml = client.newCall(GET(seasonId)).execute().asJsoup()
-        val episodeElements = episodesHtml.select("table.seasonEpisodesList tbody tr")
-        return episodeElements.map { episodeFromElement(it) }
-    }
+    override fun episodeFromElement(element: Element): SEpisode = throw UnsupportedOperationException()
 
-    override fun episodeFromElement(element: Element): SEpisode {
+    private fun episodeFromRow(element: Element, seasonNum: String): SEpisode {
         val episode = SEpisode.create()
-        if (element.select("td.seasonEpisodeTitle a").attr("href").contains("/film")) {
-            val num = element.attr("data-episode-season-id")
-            episode.name = "Film $num" + " : " + element.select("td.seasonEpisodeTitle a span").text()
-            episode.episode_number = element.attr("data-episode-season-id").toFloat()
-            episode.url = element.selectFirst("td.seasonEpisodeTitle a")!!.attr("href")
-        } else {
-            val season = element.select("td.seasonEpisodeTitle a").attr("href")
-                .substringAfter("staffel-").substringBefore("/episode")
-            val num = element.attr("data-episode-season-id")
-            episode.name = "Staffel $season Folge $num" + " : " + element.select("td.seasonEpisodeTitle a span").text()
-            episode.episode_number = element.select("td meta").attr("content").toFloat()
-            episode.url = element.selectFirst("td.seasonEpisodeTitle a")!!.attr("href")
-        }
+        episode.url = element.attr("onclick").substringAfter("'").substringBefore("'")
+        val num = element.selectFirst("th.episode-number-cell")?.text()?.toFloatOrNull() ?: 0f
+        episode.episode_number = num
+        val title = element.selectFirst("strong.episode-title-ger")?.text().orEmpty()
+        episode.name = "Staffel $seasonNum Folge ${num.toInt()} : $title"
         return episode
     }
 

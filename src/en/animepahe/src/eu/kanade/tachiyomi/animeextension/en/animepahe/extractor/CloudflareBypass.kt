@@ -103,13 +103,17 @@ class CloudflareBypass {
     /**
      * Clear cookies only for the host of the given URL, avoiding disruption
      * to sessions on unrelated domains.
+     *
+     * CookieManager.getCookie() can throw on some WebView-less/embedded
+     * environments; treat that the same as "no cookies to clear" instead of
+     * failing the whole bypass attempt.
      */
     private fun clearCookiesForUrl(pageUrl: String) {
         val domain = Uri.parse(pageUrl).host ?: return
         val cookieManager = CookieManager.getInstance()
 
         listOf("https://$domain", "https://www.$domain").forEach { url ->
-            cookieManager.getCookie(url)?.split(";")?.forEach { cookieStr ->
+            runCatching { cookieManager.getCookie(url) }.getOrNull()?.split(";")?.forEach { cookieStr ->
                 val cookieName = cookieStr.substringBefore("=").trim()
                 if (cookieName.isNotEmpty()) {
                     cookieManager.setCookie(url, "$cookieName=; Max-Age=0; path=/")

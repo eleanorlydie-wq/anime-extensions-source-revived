@@ -31,12 +31,12 @@ class KimoiTV : ParsedAnimeHttpSource() {
 
     override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/list/Anime.html?sort=top".addPage(page), headers)
 
-    override fun popularAnimeSelector(): String = "ul.media > li"
+    override fun popularAnimeSelector(): String = "div.movie-grid > div.content-card"
 
     override fun popularAnimeFromElement(element: Element): SAnime = SAnime.create().apply {
-        setUrlWithoutDomain(element.selectFirst("a.item")!!.attr("abs:href"))
-        thumbnail_url = element.selectFirst("img")!!.attr("abs:src")
-        title = element.selectFirst("div:matchesOwn(.):not(.text-muted)")!!.ownText()
+        setUrlWithoutDomain(element.selectFirst("a")!!.attr("abs:href"))
+        thumbnail_url = element.selectFirst("img.content-poster")!!.attr("abs:src")
+        title = element.selectFirst("div.content-title")!!.text()
     }
 
     override fun popularAnimeNextPageSelector(): String = "ul.pagination > li.page-item:has(a.bg-dark) ~ li.page-item > a"
@@ -87,12 +87,17 @@ class KimoiTV : ParsedAnimeHttpSource() {
         val document = response.asJsoup()
         val episodeList = mutableListOf<SEpisode>()
 
-        document.select(episodeListSelector()).forEach { season ->
+        document.select("div#seasonsAccordion a[href]").forEach { season ->
             var nextPageUrl: String? = season.attr("abs:href")
             var counter = 1
+            // Site's pagination widget always marks page 1 as "current" (bg-dark),
+            // even when viewing later pages, which would otherwise make the
+            // "next page" selector resolve to the same page forever. Guard
+            // against that by never re-visiting a URL already fetched.
+            val visitedPages = mutableSetOf<String>()
 
-            while (nextPageUrl != null) {
-                val doc = client.newCall(GET(nextPageUrl)).execute().asJsoup()
+            while (nextPageUrl != null && visitedPages.add(nextPageUrl)) {
+                val doc = client.newCall(GET(nextPageUrl, headers)).execute().asJsoup()
 
                 doc.select(episodeListSelector()).forEach { ep ->
                     episodeList.add(

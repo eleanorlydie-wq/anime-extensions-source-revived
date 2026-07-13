@@ -43,6 +43,7 @@ import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import java.net.URLDecoder
+import java.util.Calendar
 
 class FlixLatam :
     DooPlay(
@@ -50,13 +51,18 @@ class FlixLatam :
         "FlixLatam",
         "https://flixlatam.com",
     ) {
-    override fun popularAnimeRequest(page: Int) = GET("$baseUrl/pelicula/page/$page")
+    override fun popularAnimeRequest(page: Int) = GET("$baseUrl/peliculas?page=$page")
 
     override fun popularAnimeSelector() = latestUpdatesSelector()
 
     override fun popularAnimeNextPageSelector() = latestUpdatesNextPageSelector()
 
-    override fun latestUpdatesRequest(page: Int) = GET("$baseUrl/lanzamiento/2024/page/$page")
+    override fun latestUpdatesNextPageSelector() = "div.pagination > a > i.fa-chevron-right"
+
+    override fun latestUpdatesRequest(page: Int): Request {
+        val year = Calendar.getInstance().get(Calendar.YEAR)
+        return GET("$baseUrl/year/$year?page=$page")
+    }
 
     override val episodeMovieText = "Película"
 

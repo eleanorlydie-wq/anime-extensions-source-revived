@@ -38,17 +38,17 @@ class MundoDonghua :
 
     private val preferences by getPreferencesLazy()
 
-    override fun popularAnimeSelector() = "div > div.row > div.item > a"
+    override fun popularAnimeSelector() = "div.md-card-grid > div.md-card > a"
 
     override fun popularAnimeRequest(page: Int) = GET("$baseUrl/lista-donghuas/$page")
 
     override fun popularAnimeFromElement(element: Element) = SAnime.create().apply {
         setUrlWithoutDomain(element.attr("href"))
-        title = element.selectFirst("h5")!!.text().removeSurrounding("\"")
+        title = element.selectFirst(".md-card-title")!!.text().removeSurrounding("\"")
         thumbnail_url = element.selectFirst("img")?.attr("abs:src")
     }
 
-    override fun popularAnimeNextPageSelector() = "ul.pagination li:last-child a"
+    override fun popularAnimeNextPageSelector() = "nav.md-pagination a:has(i.fa-chevron-right)"
 
     override fun latestUpdatesNextPageSelector() = popularAnimeNextPageSelector()
 
@@ -62,16 +62,15 @@ class MundoDonghua :
 
     override fun animeDetailsParse(document: Document): SAnime {
         val anime = SAnime.create()
-        anime.thumbnail_url = baseUrl + document.selectFirst("div.col-md-4.col-xs-12.mb-10 div.row.sm-row > div.side-banner > div.banner-side-serie")!!
-            .attr("style").substringAfter("background-image: url(").substringBefore(")")
-        anime.title = document.selectFirst("div.col-md-4.col-xs-12.mb-10 div.row.sm-row div div.sf.fc-dark.ls-title-serie")!!.html()
-        anime.description = document.selectFirst("section div.row div.col-md-8 div.sm-row p.text-justify")!!.text().removeSurrounding("\"")
-        anime.genre = document.select("div.col-md-8.col-xs-12 div.sm-row a.generos span.label").joinToString { it.text() }
-        anime.status = parseStatus(document.select("div.col-md-4.col-xs-12.mb-10 div.row.sm-row div:nth-child(2) div:nth-child(2) p span.badge").text())
+        anime.thumbnail_url = document.selectFirst("div.md-detail-poster img")?.attr("abs:src")
+        anime.title = document.selectFirst("h1.md-detail-title")!!.text()
+        anime.description = document.selectFirst("p.md-detail-synopsis")!!.text().removeSurrounding("\"")
+        anime.genre = document.select("div.md-genres-block a.md-genre-tag").joinToString { it.text() }
+        anime.status = parseStatus(document.selectFirst("span.md-emision-badge")!!.text())
         return anime
     }
 
-    override fun episodeListSelector() = "div.sm-row.mt-10 div.donghua-list-scroll ul.donghua-list a"
+    override fun episodeListSelector() = "div.md-ep-scroll ul.md-episode-list a"
 
     override fun episodeFromElement(element: Element): SEpisode {
         val episode = SEpisode.create()

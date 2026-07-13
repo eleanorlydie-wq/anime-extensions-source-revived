@@ -50,12 +50,12 @@ class DonghuaNoSekai :
     // ============================== Popular ===============================
     override fun popularAnimeRequest(page: Int) = GET(baseUrl, headers)
 
-    override fun popularAnimeSelector() = "div.sidebarContent div.navItensTop li > a"
+    override fun popularAnimeSelector() = "div.sidebarContent ul.postsNew > li > a"
 
     override fun popularAnimeFromElement(element: Element) = SAnime.create().apply {
         setUrlWithoutDomain(element.attr("href"))
-        title = element.attr("title")
-        thumbnail_url = element.selectFirst("img")?.attr("src")
+        title = element.selectFirst("h4.title")!!.text()
+        thumbnail_url = element.selectFirst("div.thumb img")?.attr("src")
     }
 
     override fun popularAnimeNextPageSelector() = null

@@ -18,11 +18,20 @@ import eu.kanade.tachiyomi.network.POST
 import keiyoushi.utils.getPreferencesLazy
 import keiyoushi.utils.parallelCatchingFlatMapBlocking
 import keiyoushi.utils.useAsJsoup
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.int
+import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.FormBody
 import okhttp3.Request
 import okhttp3.Response
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
+import uy.kohesive.injekt.injectLazy
 
 class AnimeBase :
     ParsedAnimeHttpSource(),
@@ -38,25 +47,71 @@ class AnimeBase :
 
     private val preferences by getPreferencesLazy()
 
-    // ============================== Popular ===============================
-    override fun popularAnimeRequest(page: Int) = GET("$baseUrl/favorites", headers)
+    private val json: Json by injectLazy()
 
-    override fun popularAnimeSelector() = "div.table-responsive > a"
+    // Site redesign (2026): anime-base.net is now a Laravel + Inertia.js/Svelte
+    // SPA. Every document response still contains the full page state as a
+    // JSON blob in `<div id="app" data-page="{...}">`, e.g. on `/anime-liste`:
+    // data-page="{&quot;component&quot;:&quot;AB/ABPages/Serie/List&quot;,...,
+    // &quot;props&quot;:{...,&quot;series&quot;:{&quot;meta&quot;:{&quot;total&quot;:2519,
+    // &quot;perPage&quot;:24,&quot;currentPage&quot;:1,&quot;lastPage&quot;:105,...},
+    // &quot;data&quot;:[{&quot;id&quot;:1374,&quot;name&quot;:&quot;.hack//Legend of the
+    // Twilight&quot;,&quot;category&quot;:&quot;anime&quot;,&quot;image&quot;:
+    // &quot;/uploads/series-covers/hack-legend-of-the-twilight/cover-large.webp&quot;,
+    // &quot;nameSlug&quot;:&quot;hack-legend-of-the-twilight&quot;,...}]}}}"
+    // Jsoup decodes the HTML entities for us via Element.attr().
+    private fun Document.inertiaProps(): JsonObject = json.parseToJsonElement(selectFirst("[data-page]")!!.attr("data-page"))
+        .jsonObject.getValue("props").jsonObject
 
-    override fun popularAnimeFromElement(element: Element) = SAnime.create().apply {
-        setUrlWithoutDomain(element.attr("href").replace("/link/", "/anime/"))
-        thumbnail_url = element.selectFirst("div.thumbnail img")?.absUrl("src")
-        title = element.selectFirst("div.caption h3")!!.text()
+    private fun JsonObject.toSAnime() = SAnime.create().apply {
+        val category = this@toSAnime["category"]?.jsonPrimitive?.contentOrNull ?: "anime"
+        val slug = getValue("nameSlug").jsonPrimitive.content
+        setUrlWithoutDomain("/$category/$slug")
+        title = getValue("name").jsonPrimitive.content
+        thumbnail_url = this@toSAnime["image"]?.jsonPrimitive?.contentOrNull?.let { baseUrl + it }
     }
+
+    // ============================== Popular ===============================
+    // `/favorites` (login-only "favorites" list) 404s and no longer exists;
+    // `/anime-liste` is the public, paginated all-anime browse page and is
+    // the closest available equivalent.
+    override fun popularAnimeRequest(page: Int) = GET("$baseUrl/anime-liste?page=$page", headers)
+
+    override fun popularAnimeParse(response: Response): AnimesPage {
+        val props = response.useAsJsoup().inertiaProps()
+        val series = props.getValue("series").jsonObject
+        val meta = series.getValue("meta").jsonObject
+        val animes = series.getValue("data").jsonArray.map { it.jsonObject.toSAnime() }
+        val hasNextPage = meta.getValue("currentPage").jsonPrimitive.int < meta.getValue("lastPage").jsonPrimitive.int
+        return AnimesPage(animes, hasNextPage)
+    }
+
+    override fun popularAnimeSelector(): String = throw UnsupportedOperationException()
+
+    override fun popularAnimeFromElement(element: Element): SAnime = throw UnsupportedOperationException()
 
     override fun popularAnimeNextPageSelector() = null
 
     // =============================== Latest ===============================
+    // `/updates` still exists (still Bootstrap-era `div.box-header`/`div.box-body`
+    // markup is gone though); it now renders via the same Inertia data-page blob,
+    // props.updates: [{...,"seriesSlug":"skeleton-knight-in-another-world",
+    // "serie":{"id":1626,"name":"Skeleton Knight in Another World","nameSlug":
+    // "skeleton-knight-in-another-world","category":"anime","image":"/uploads/..."}}]
+    // It is not paginated (same 50 entries regardless of ?page=).
     override fun latestUpdatesRequest(page: Int) = GET("$baseUrl/updates", headers)
 
-    override fun latestUpdatesSelector() = "div.box-header + div.box-body > a"
+    override fun latestUpdatesParse(response: Response): AnimesPage {
+        val props = response.useAsJsoup().inertiaProps()
+        val animes = props.getValue("updates").jsonArray
+            .map { it.jsonObject.getValue("serie").jsonObject.toSAnime() }
+            .distinctBy { it.url }
+        return AnimesPage(animes, false)
+    }
 
-    override fun latestUpdatesFromElement(element: Element) = popularAnimeFromElement(element)
+    override fun latestUpdatesSelector(): String = throw UnsupportedOperationException()
+
+    override fun latestUpdatesFromElement(element: Element): SAnime = throw UnsupportedOperationException()
 
     override fun latestUpdatesNextPageSelector() = null
 
@@ -117,58 +172,70 @@ class AnimeBase :
     override fun searchAnimeNextPageSelector() = "ul.pagination li > a[rel=next]"
 
     // =========================== Anime Details ============================
+    // props.serie, e.g. {"id":1626,"name":"Skeleton Knight in Another World",
+    // "nameSlug":"skeleton-knight-in-another-world","category":"anime",
+    // "originalName":"Gaikotsu Kishi-sama, Tadaima Isekai e Odekakechuu",
+    // "image":"/uploads/series-covers/.../cover-large.webp","year":"2022",
+    // "status":0,"description":"...","genres":[{"id":261,"name":"Abenteuerkomödie",...}]}
     override fun animeDetailsParse(document: Document) = SAnime.create().apply {
         setUrlWithoutDomain(document.location())
 
-        val boxBody = document.selectFirst("div.box-body.box-profile > center")!!
-        title = boxBody.selectFirst("h3")!!.text()
-        thumbnail_url = boxBody.selectFirst("img")!!.absUrl("src")
-
-        val infosDiv = document.selectFirst("div.box-body > div.col-md-9")!!
-        status = parseStatus(infosDiv.getInfo("Status"))
-        genre = infosDiv.select("strong:contains(Genre) + p > a").eachText()
-            .joinToString()
-            .takeIf(String::isNotBlank)
+        val serie = document.inertiaProps().getValue("serie").jsonObject
+        title = serie.getValue("name").jsonPrimitive.content
+        thumbnail_url = serie["image"]?.jsonPrimitive?.contentOrNull?.let { baseUrl + it }
+        status = parseStatus(serie["status"]?.jsonPrimitive?.intOrNull)
+        genre = serie["genres"]?.jsonArray
+            ?.mapNotNull { it.jsonObject["name"]?.jsonPrimitive?.contentOrNull }
+            ?.joinToString()
+            ?.takeIf(String::isNotBlank)
 
         description = buildString {
-            infosDiv.getInfo("Beschreibung")?.also(::append)
+            serie["description"]?.jsonPrimitive?.contentOrNull?.also(::append)
 
-            infosDiv.getInfo("Originalname")?.also { append("\nOriginal name: $it") }
-            infosDiv.getInfo("Erscheinungsjahr")?.also { append("\nErscheinungsjahr: $it") }
+            serie["originalName"]?.jsonPrimitive?.contentOrNull?.also { append("\nOriginal name: $it") }
+            serie["year"]?.jsonPrimitive?.contentOrNull?.also { append("\nErscheinungsjahr: $it") }
         }
     }
 
-    private fun parseStatus(status: String?) = when (status.orEmpty()) {
-        "Laufend" -> SAnime.ONGOING
-        "Abgeschlossen" -> SAnime.COMPLETED
+    // status: 0 on the currently-airing "Skeleton Knight in Another World"
+    // (weekday 6), 1 on the finished 2003 show ".hack//Legend of the Twilight"
+    // (weekday 0) -> 0 = ongoing, 1 = completed.
+    private fun parseStatus(status: Int?) = when (status) {
+        0 -> SAnime.ONGOING
+        1 -> SAnime.COMPLETED
         else -> SAnime.UNKNOWN
     }
 
-    private fun Element.getInfo(selector: String) = selectFirst("strong:contains($selector) + p")?.text()?.trim()
-
     // ============================== Episodes ==============================
-    override fun episodeListParse(response: Response) = super.episodeListParse(response).sortedWith(
-        compareBy(
-            { it.name.startsWith("Film ") },
-            { it.name.startsWith("Special ") },
-            { it.episode_number },
-        ),
-    ).reversed()
+    // serie.episodes, e.g. {"id":1829189,"serieId":1626,"season":"1",
+    // "name":"Der wandernde Ritter begibt sich auf die Reise...","type":0,
+    // "filler":0,"dubsub":0,"link1":null,...,"link5":"https://filemoon.to/d/...",
+    // "link7":"https://strmup.to/v/...","episode":1}
+    override fun episodeListParse(response: Response): List<SEpisode> {
+        val document = response.useAsJsoup()
+        val animeUrl = document.location()
+        val serie = document.inertiaProps().getValue("serie").jsonObject
+        return serie.getValue("episodes").jsonArray
+            .map { it.jsonObject.toSEpisode(animeUrl) }
+            .sortedBy { it.episode_number }
+            .reversed()
+    }
 
-    override fun episodeListSelector() = "div.tab-content > div > div.panel"
+    override fun episodeListSelector(): String = throw UnsupportedOperationException()
 
-    override fun episodeFromElement(element: Element) = SEpisode.create().apply {
-        val epname = element.selectFirst("h3")?.text() ?: "Episode 1"
-        val language = when (element.selectFirst("button")?.attr("data-dubbed").orEmpty()) {
-            "0" -> "Subbed"
-            else -> "Dubbed"
-        }
+    override fun episodeFromElement(element: Element): SEpisode = throw UnsupportedOperationException()
 
-        name = epname
-        scanlator = language
-        episode_number = epname.substringBefore(":").substringAfter(" ").toFloatOrNull() ?: 0F
-        val selectorClass = element.classNames().first { it.startsWith("episode-div") }
-        setUrlWithoutDomain(element.baseUri() + "?selector=div.panel.$selectorClass")
+    private fun JsonObject.toSEpisode(animeUrl: String) = SEpisode.create().apply {
+        val epNum = getValue("episode").jsonPrimitive.int
+        val season = this@toSEpisode["season"]?.jsonPrimitive?.contentOrNull ?: "1"
+        val rawName = this@toSEpisode["name"]?.jsonPrimitive?.contentOrNull.orEmpty().trim()
+        val dubsub = this@toSEpisode["dubsub"]?.jsonPrimitive?.intOrNull ?: 0
+        val id = getValue("id").jsonPrimitive.content
+
+        name = "Staffel $season Folge $epNum" + if (rawName.isNotBlank()) ": $rawName" else ""
+        episode_number = epNum.toFloat()
+        scanlator = if (dubsub == 0) "Subbed" else "Dubbed"
+        setUrlWithoutDomain("$animeUrl?epid=$id")
     }
 
     // ============================ Video Links =============================
