@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.animeextension.it.animesaturn
 
+import android.util.Base64
 import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
@@ -13,11 +14,15 @@ import eu.kanade.tachiyomi.util.asJsoup
 import keiyoushi.utils.addListPreference
 import keiyoushi.utils.delegate
 import keiyoushi.utils.getPreferencesLazy
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
 import okhttp3.Headers
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
 import okhttp3.Response
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
+import uy.kohesive.injekt.injectLazy
 
 class AnimeSaturn :
     ParsedAnimeHttpSource(),
@@ -42,39 +47,68 @@ class AnimeSaturn :
 
     override val baseUrl by preferences.delegate(PREF_DOMAIN, DOMAIN_DEFAULT)
 
-    override fun popularAnimeSelector(): String = "div.sebox"
+    private val json: Json by injectLazy()
 
-    override fun popularAnimeRequest(page: Int): Request = GET(if (isNewDomain()) "$baseUrl/ongoing?page=$page" else "$baseUrl/animeincorso?page=$page")
+    // The current (2026) AnimeMars template renders every listing (ongoing/newest/filter results)
+    // with the same card markup: a div.grid.grid-cols-2.gap-4... wrapping <a class="group block"> cards.
+    private fun newDomainCardSelector(): String = "div.grid.grid-cols-2.gap-4 a.group.block"
+
+    private fun newDomainCardFromElement(element: Element): SAnime {
+        val anime = SAnime.create()
+        anime.setUrlWithoutDomain(element.attr("href"))
+        anime.title = formatTitle(element.selectFirst("h3")!!.text())
+        anime.thumbnail_url = element.selectFirst("img")?.attr("src")
+        return anime
+    }
+
+    private fun newDomainNextPageSelector(): String = "a.am-pgbtn[rel=next]"
+
+    override fun popularAnimeSelector(): String = if (isNewDomain()) newDomainCardSelector() else "div.sebox"
+
+    override fun popularAnimeRequest(page: Int): Request = if (isNewDomain()) {
+        GET(baseUrl + "/ongoing" + if (page > 1) "/$page" else "")
+    } else {
+        GET("$baseUrl/animeincorso?page=$page")
+    }
 
     private fun formatTitle(titlestring: String): String = titlestring.replace("(ITA) ITA", "Dub ITA").replace("(ITA)", "Dub ITA").replace("Sub ITA", "")
 
     override fun popularAnimeFromElement(element: Element): SAnime {
+        if (isNewDomain()) return newDomainCardFromElement(element)
         val anime = SAnime.create()
         anime.setUrlWithoutDomain(element.selectFirst("div.msebox div.headsebox div.tisebox h2 a")!!.attr("href"))
         anime.title = formatTitle(element.selectFirst("div.msebox div.headsebox div.tisebox h2 a")!!.text())
-        if (isNewDomain()) {
-            anime.thumbnail_url =
-                element.selectFirst("div.msebox div.bigsebox div.l a img.image-animation")!!
-                    .attr("src")
-        } else {
-            anime.thumbnail_url =
-                element.selectFirst("div.msebox div.bigsebox div.l img.attachment-post-thumbnail.size-post-thumbnail.wp-post-image")!!
-                    .attr("src")
-        }
+        anime.thumbnail_url =
+            element.selectFirst("div.msebox div.bigsebox div.l img.attachment-post-thumbnail.size-post-thumbnail.wp-post-image")!!
+                .attr("src")
         return anime
     }
 
-    override fun popularAnimeNextPageSelector(): String = "li.page-item.active:not(li:last-child)"
+    override fun popularAnimeNextPageSelector(): String = if (isNewDomain()) newDomainNextPageSelector() else "li.page-item.active:not(li:last-child)"
 
     override fun episodeListParse(response: Response): List<SEpisode> {
         val document = response.asJsoup()
         return document.select(episodeListSelector()).map { episodeFromElement(it) }.reversed()
     }
 
-    override fun episodeListSelector() = "div.btn-group.episodes-button.episodi-link-button"
+    override fun episodeListSelector() = if (isNewDomain()) "a.ep-tile" else "div.btn-group.episodes-button.episodi-link-button"
 
     override fun episodeFromElement(element: Element): SEpisode {
         val episode = SEpisode.create()
+        if (isNewDomain()) {
+            // Episode tiles link to /watch/<slug>/ep-N, a landing page with no player;
+            // the actual player iframe lives on /stream/<slug>/ep-N.
+            episode.setUrlWithoutDomain(element.attr("href").replace("/watch/", "/stream/"))
+            val epTitle = element.attr("title") // e.g. "Episodio 1"
+            episode.name = epTitle
+            val epNumber = epTitle.substringAfter("Episodio ").trim()
+            episode.episode_number = if (epNumber.contains("-", true)) {
+                epNumber.substringBefore("-").trim().toFloatOrNull() ?: 0F
+            } else {
+                epNumber.toFloatOrNull() ?: 0F
+            }
+            return episode
+        }
         episode.setUrlWithoutDomain(element.selectFirst("a.btn.btn-dark.mb-1.bottone-ep")!!.attr("href"))
         val epText = element.selectFirst("a.btn.btn-dark.mb-1.bottone-ep")!!.text()
         val epNumber = epText.substringAfter("Episodio ")
@@ -89,6 +123,7 @@ class AnimeSaturn :
 
     override fun videoListParse(response: Response): List<Video> {
         val document = response.asJsoup()
+        if (isNewDomain()) return videosFromNewDomain(document)
         val standardVideos = videosFromElement(document)
         val videoList = mutableListOf<Video>()
         videoList.addAll(standardVideos)
@@ -96,9 +131,45 @@ class AnimeSaturn :
     }
 
     override fun videoListRequest(episode: SEpisode): Request {
+        if (isNewDomain()) return GET(baseUrl + episode.url)
         val episodePage = client.newCall(GET(baseUrl + episode.url)).execute().asJsoup()
         val watchUrl = episodePage.select("a[href*=/watch]").attr("href")
         return GET("$watchUrl&s=alt")
+    }
+
+    @Serializable
+    private data class PlaylistResponseDto(
+        val d: String = "",
+        val p: String = "",
+        val t: String = "",
+    )
+
+    // The embed player (play.marscdn.org) fetches /embed/<id>/playlist?token=...&expires=...
+    // and XORs the base64-decoded "d" field with the token to recover the real source URL.
+    // Confirmed against the live embed.js: atob(e) then charCodeAt XOR key.charCodeAt(i % key.length).
+    private fun xorDecode(encoded: String, key: String): String {
+        if (encoded.isEmpty() || key.isEmpty()) return ""
+        val decodedBytes = Base64.decode(encoded, Base64.DEFAULT)
+        val sb = StringBuilder(decodedBytes.size)
+        for (i in decodedBytes.indices) {
+            sb.append(((decodedBytes[i].toInt() and 0xFF) xor key[i % key.length].code).toChar())
+        }
+        return sb.toString()
+    }
+
+    private fun videosFromNewDomain(document: Document): List<Video> {
+        val iframeUrl = document.selectFirst("iframe#watch-iframe")?.attr("src") ?: return emptyList()
+        val match = Regex("""(https?://[^/]+)/embed/(\d+)\?token=([^&]+)&expires=(\d+)""").find(iframeUrl)
+            ?: return emptyList()
+        val (embedOrigin, embedId, token, expires) = match.destructured
+        val playlistUrl = "$embedOrigin/embed/$embedId/playlist?token=$token&expires=$expires"
+        val playlistBody = client.newCall(
+            GET(playlistUrl, headers = Headers.headersOf("Referer", "$embedOrigin/")),
+        ).execute().body.string()
+        val playlist = json.decodeFromString<PlaylistResponseDto>(playlistBody)
+        val videoUrl = xorDecode(playlist.d, token)
+        if (videoUrl.isEmpty()) return emptyList()
+        return listOf(Video(videoUrl, "Qualità predefinita", videoUrl))
     }
 
     override fun videoListSelector() = throw UnsupportedOperationException()
@@ -159,6 +230,7 @@ class AnimeSaturn :
     override fun videoUrlParse(document: Document) = throw UnsupportedOperationException()
 
     override fun searchAnimeFromElement(element: Element): SAnime {
+        if (isNewDomain()) return newDomainCardFromElement(element)
         val anime = SAnime.create()
         if (filterSearch) {
             // filter search
@@ -167,35 +239,26 @@ class AnimeSaturn :
             anime.thumbnail_url = element.selectFirst("div.card.mb-4.shadow-sm a img.new-anime")!!.attr("src")
         } else {
             // word search
-            if (isNewDomain()) {
-                anime.setUrlWithoutDomain(
-                    element.selectFirst("li.list-group-item.bg-dark-as-box-shadow div.item-archivio div.info-archivio h3 a.badge.badge-archivio.text-left.badge-purple")!!
-                        .attr("href"),
-                )
-                anime.title = formatTitle(
-                    element.selectFirst("li.list-group-item.bg-dark-as-box-shadow div.item-archivio div.info-archivio h3 a.badge.badge-archivio.text-left.badge-purple")!!
-                        .text(),
-                )
-            } else {
-                anime.setUrlWithoutDomain(
-                    element.selectFirst("li.list-group-item.bg-dark-as-box-shadow div.item-archivio div.info-archivio h3 a.badge.badge-archivio.badge-light")!!
-                        .attr("href"),
-                )
-                anime.title = formatTitle(
-                    element.selectFirst("li.list-group-item.bg-dark-as-box-shadow div.item-archivio div.info-archivio h3 a.badge.badge-archivio.badge-light")!!
-                        .text(),
-                )
-            }
+            anime.setUrlWithoutDomain(
+                element.selectFirst("li.list-group-item.bg-dark-as-box-shadow div.item-archivio div.info-archivio h3 a.badge.badge-archivio.badge-light")!!
+                    .attr("href"),
+            )
+            anime.title = formatTitle(
+                element.selectFirst("li.list-group-item.bg-dark-as-box-shadow div.item-archivio div.info-archivio h3 a.badge.badge-archivio.badge-light")!!
+                    .text(),
+            )
             anime.thumbnail_url = element.select("li.list-group-item.bg-dark-as-box-shadow div.item-archivio a.thumb.image-wrapper img.rounded.locandina-archivio").attr("src")
         }
         return anime
     }
 
-    override fun searchAnimeNextPageSelector(): String = "li.page-item.active:not(li:last-child)"
+    override fun searchAnimeNextPageSelector(): String = if (isNewDomain()) newDomainNextPageSelector() else "li.page-item.active:not(li:last-child)"
 
     private var filterSearch = false
 
-    override fun searchAnimeSelector(): String = if (filterSearch) {
+    override fun searchAnimeSelector(): String = if (isNewDomain()) {
+        newDomainCardSelector() // both word and filter search share the same card grid
+    } else if (filterSearch) {
         "div.anime-card-newanime.main-anime-card" // filter search
     } else {
         "ul.list-group" // regular search
@@ -203,6 +266,16 @@ class AnimeSaturn :
 
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
         val parameters = getSearchParameters(filters)
+        if (isNewDomain()) {
+            val path = if (page > 1) "/filter/$page" else "/filter"
+            return if (parameters.isEmpty()) {
+                filterSearch = false
+                GET("$baseUrl$path".toHttpUrl().newBuilder().addQueryParameter("key", query).build())
+            } else {
+                filterSearch = true
+                GET("$baseUrl$path?${parameters.removePrefix("&")}")
+            }
+        }
         return if (parameters.isEmpty()) {
             filterSearch = false
             GET("$baseUrl/animelist?search=$query") // regular search
@@ -212,7 +285,30 @@ class AnimeSaturn :
         }
     }
 
-    override fun animeDetailsParse(document: Document): SAnime {
+    override fun animeDetailsParse(document: Document): SAnime = if (isNewDomain()) newDomainAnimeDetailsParse(document) else oldDomainAnimeDetailsParse(document)
+
+    private fun metaRowValue(document: Document, label: String): String? = document.select("div.am-meta-row > a, div.am-meta-row > div").firstOrNull { el ->
+        el.selectFirst("span")?.text()?.trim() == label
+    }?.select("span")?.getOrNull(1)?.text()?.trim()
+
+    private fun newDomainAnimeDetailsParse(document: Document): SAnime {
+        val anime = SAnime.create()
+        val titleEl = document.selectFirst("h1")!!
+        anime.title = formatTitle(titleEl.text())
+        anime.thumbnail_url = document.selectFirst("img.w-full.object-cover")?.attr("src")
+        anime.genre = document.select("a.am-chip").joinToString { it.text() }
+        anime.status = parseStatus(metaRowValue(document, "Stato") ?: "")
+        anime.author = metaRowValue(document, "Studio")
+        anime.description = document.selectFirst("div.story-clip")?.text()
+        val altTitleEl = titleEl.nextElementSibling()
+        val altTitle = if (altTitleEl?.tagName() == "p") formatTitle(altTitleEl.text()) else ""
+        if (altTitle.isNotBlank() && !anime.title.contains(altTitle, true)) {
+            anime.description = (anime.description ?: "") + "\n\nTitolo Alternativo: " + altTitle
+        }
+        return anime
+    }
+
+    private fun oldDomainAnimeDetailsParse(document: Document): SAnime {
         val anime = SAnime.create()
         anime.title =
             formatTitle(document.select("div.container.anime-title-as.mb-3.w-100 b").text())
@@ -268,67 +364,76 @@ class AnimeSaturn :
         }
     }
 
-    override fun latestUpdatesSelector(): String = "div.card.mb-4.shadow-sm"
+    override fun latestUpdatesSelector(): String = if (isNewDomain()) newDomainCardSelector() else "div.card.mb-4.shadow-sm"
 
     override fun latestUpdatesFromElement(element: Element): SAnime {
+        if (isNewDomain()) return newDomainCardFromElement(element)
         val anime = SAnime.create()
         anime.setUrlWithoutDomain(element.selectFirst("a")!!.attr("href"))
         anime.title = formatTitle(element.selectFirst("a")!!.attr("title"))
         anime.thumbnail_url = element.selectFirst("a img.new-anime")!!.attr("src")
         return anime
     }
-    override fun latestUpdatesRequest(page: Int): Request = GET("$baseUrl/newest?page=$page")
 
-    override fun latestUpdatesNextPageSelector(): String = "li.page-item.active:not(li:last-child)"
+    override fun latestUpdatesRequest(page: Int): Request = if (isNewDomain()) {
+        GET(baseUrl + "/newest" + if (page > 1) "/$page" else "")
+    } else {
+        GET("$baseUrl/newest?page=$page")
+    }
+
+    override fun latestUpdatesNextPageSelector(): String = if (isNewDomain()) newDomainNextPageSelector() else "li.page-item.active:not(li:last-child)"
 
     // Filters
-    internal class Genre(val id: String) : AnimeFilter.CheckBox(id)
+    // Genre ids below are the numeric category ids used by the current (2026) AnimeMars
+    // /filter?categories[]=<id> search; taken from the live checkboxes on /filter.
+    internal class Genre(val id: String, name: String) : AnimeFilter.CheckBox(name)
     private class GenreList(genres: List<Genre>) : AnimeFilter.Group<Genre>("Generi", genres)
     private fun getGenres() = listOf(
-        Genre("Arti Marziali"),
-        Genre("Avventura"),
-        Genre("Azione"),
-        Genre("Bambini"),
-        Genre("Commedia"),
-        Genre("Demenziale"),
-        Genre("Demoni"),
-        Genre("Drammatico"),
-        Genre("Ecchi"),
-        Genre("Fantasy"),
-        Genre("Gioco"),
-        Genre("Harem"),
-        Genre("Hentai"),
-        Genre("Horror"),
-        Genre("Josei"),
-        Genre("Magia"),
-        Genre("Mecha"),
-        Genre("Militari"),
-        Genre("Mistero"),
-        Genre("Musicale"),
-        Genre("Parodia"),
-        Genre("Polizia"),
-        Genre("Psicologico"),
-        Genre("Romantico"),
-        Genre("Samurai"),
-        Genre("Sci-Fi"),
-        Genre("Scolastico"),
-        Genre("Seinen"),
-        Genre("Sentimentale"),
-        Genre("Shoujo Ai"),
-        Genre("Shoujo"),
-        Genre("Shounen Ai"),
-        Genre("Shounen"),
-        Genre("Slice of Life"),
-        Genre("Soprannaturale"),
-        Genre("Spazio"),
-        Genre("Sport"),
-        Genre("Storico"),
-        Genre("Superpoteri"),
-        Genre("Thriller"),
-        Genre("Vampiri"),
-        Genre("Veicoli"),
-        Genre("Yaoi"),
-        Genre("Yuri"),
+        Genre("3", "Arti Marziali"),
+        Genre("5", "Avanguardia"),
+        Genre("2", "Avventura"),
+        Genre("1", "Azione"),
+        Genre("47", "Bambini"),
+        Genre("4", "Commedia"),
+        Genre("6", "Demoni"),
+        Genre("7", "Drammatico"),
+        Genre("8", "Ecchi"),
+        Genre("9", "Fantasy"),
+        Genre("10", "Gioco"),
+        Genre("11", "Harem"),
+        Genre("43", "Hentai"),
+        Genre("13", "Horror"),
+        Genre("49", "Isekai"),
+        Genre("14", "Josei"),
+        Genre("16", "Magia"),
+        Genre("18", "Mecha"),
+        Genre("19", "Militari"),
+        Genre("21", "Mistero"),
+        Genre("20", "Musicale"),
+        Genre("22", "Parodia"),
+        Genre("23", "Polizia"),
+        Genre("24", "Psicologico"),
+        Genre("46", "Romantico"),
+        Genre("26", "Samurai"),
+        Genre("28", "Sci-Fi"),
+        Genre("27", "Scolastico"),
+        Genre("29", "Seinen"),
+        Genre("25", "Sentimentale"),
+        Genre("30", "Shoujo"),
+        Genre("31", "Shoujo Ai"),
+        Genre("32", "Shounen"),
+        Genre("33", "Shounen Ai"),
+        Genre("34", "Slice of Life"),
+        Genre("37", "Soprannaturale"),
+        Genre("35", "Spazio"),
+        Genre("36", "Sport"),
+        Genre("12", "Storico"),
+        Genre("38", "Superpoteri"),
+        Genre("39", "Thriller"),
+        Genre("40", "Vampiri"),
+        Genre("48", "Veicoli"),
+        Genre("41", "Yaoi"),
+        Genre("42", "Yuri"),
     )
 
     internal class Year(val id: String) : AnimeFilter.CheckBox(id)
@@ -382,6 +487,7 @@ class AnimeSaturn :
         Year("2023"),
         Year("2024"),
         Year("2025"),
+        Year("2026"),
     )
 
     internal class State(val id: String, name: String) : AnimeFilter.CheckBox(name)
@@ -395,10 +501,20 @@ class AnimeSaturn :
 
     internal class Lang(val id: String, name: String) : AnimeFilter.CheckBox(name)
     private class LangList(langs: List<Lang>) : AnimeFilter.Group<Lang>("Lingua", langs)
-    private fun getLangs() = listOf(
-        Lang("0", "Subbato"),
-        Lang("1", "Doppiato"),
-    )
+
+    // The old domain used boolean 0/1 language ids; the new domain (default) uses
+    // language codes as seen on /filter: languages[]=jp|it|en|kr|ch.
+    private fun getLangs() = if (isNewDomain()) {
+        listOf(
+            Lang("jp", "Subbato"),
+            Lang("it", "Doppiato"),
+        )
+    } else {
+        listOf(
+            Lang("0", "Subbato"),
+            Lang("1", "Doppiato"),
+        )
+    }
 
     override fun getFilterList(): AnimeFilterList = AnimeFilterList(
         AnimeFilter.Header("Ricerca per titolo ignora i filtri e viceversa"),
@@ -408,7 +524,41 @@ class AnimeSaturn :
         LangList(getLangs()),
     )
 
-    private fun getSearchParameters(filters: AnimeFilterList): String {
+    private fun getSearchParameters(filters: AnimeFilterList): String = if (isNewDomain()) {
+        getNewDomainSearchParameters(filters)
+    } else {
+        getOldDomainSearchParameters(filters)
+    }
+
+    // New domain (default) uses repeated empty-bracket array params, e.g. categories[]=1&categories[]=2,
+    // confirmed against the live /filter endpoint.
+    private fun getNewDomainSearchParameters(filters: AnimeFilterList): String {
+        var totalstring = ""
+        filters.forEach { filter ->
+            when (filter) {
+                is GenreList -> {
+                    filter.state.forEach { genre -> if (genre.state) totalstring += "&categories%5B%5D=${genre.id}" }
+                }
+
+                is YearList -> {
+                    filter.state.forEach { year -> if (year.state) totalstring += "&years%5B%5D=${year.id}" }
+                }
+
+                is StateList -> {
+                    filter.state.forEach { state -> if (state.state) totalstring += "&states%5B%5D=${state.id}" }
+                }
+
+                is LangList -> {
+                    filter.state.forEach { lang -> if (lang.state) totalstring += "&languages%5B%5D=${lang.id}" }
+                }
+
+                else -> {}
+            }
+        }
+        return totalstring
+    }
+
+    private fun getOldDomainSearchParameters(filters: AnimeFilterList): String {
         var totalstring = ""
         var variantgenre = 0
         var variantstate = 0

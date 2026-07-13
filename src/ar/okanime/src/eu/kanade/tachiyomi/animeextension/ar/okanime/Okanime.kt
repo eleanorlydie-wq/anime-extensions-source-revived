@@ -108,28 +108,28 @@ class Okanime :
     // =========================== Anime Details ============================
     override fun animeDetailsParse(document: Document) = SAnime.create().apply {
         setUrlWithoutDomain(document.location())
-        title = document.selectFirst("div.author-info-title > h1")!!.text()
-        genre = document.select("div.review-author-info a").eachText().joinToString()
+        title = document.selectFirst("h1.animepage-h1")!!.text()
+        genre = document.select("div.animepage-genres a.genre-tag").eachText().joinToString()
 
-        val infosdiv = document.selectFirst("div.text-right")!!
-        thumbnail_url = infosdiv.selectFirst("img")!!.attr("src")
-        status = infosdiv.selectFirst("div.full-list-info:contains(حالة الأنمي) a").let {
-            when (it?.text() ?: "") {
-                "يعرض الان" -> SAnime.ONGOING
+        thumbnail_url = document.selectFirst("img.animepage-poster")?.attr("src")
+        status = document.selectFirst("dt:contains(الحالة) + dd a")?.text().let {
+            when (it ?: "") {
+                "يعرض الآن" -> SAnime.ONGOING
                 "مكتمل" -> SAnime.COMPLETED
                 else -> SAnime.UNKNOWN
             }
         }
         description = buildString {
-            document.selectFirst("div.review-content")
+            document.selectFirst("div.synopsis-text")
                 ?.text()
                 ?.let { append("$it\n") }
 
-            infosdiv.select("div.full-list-info").forEach { info ->
-                info.select("small")
-                    .eachText()
-                    .joinToString(": ")
-                    .let { append("\n$it") }
+            document.select("dl.animepage-meta div.animepage-meta-row").forEach { row ->
+                val label = row.selectFirst("dt")?.text().orEmpty()
+                val value = row.selectFirst("dd")?.text().orEmpty()
+                if (label.isNotEmpty() && value.isNotEmpty()) {
+                    append("\n$label: $value")
+                }
             }
         }
     }

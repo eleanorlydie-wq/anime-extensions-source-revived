@@ -45,7 +45,7 @@ class Cineby :
         get() = preferences.domainPref
 
     // Cineby/Videasy proxy
-    private val apiUrl = "https://db.videasy.to/3"
+    private val apiUrl = "https://api.videasy.to/3"
 
     private fun apiOrigin(url: String): String = url.replace(Regex("""https?://www\."""), "https://")
 

@@ -91,13 +91,13 @@ object AnimeSrbijaFilters {
 
         return FilterSearchParams(
             filters.asQueryPart<SortFilter>(),
-            filters.parseCheckbox<GenresFilter>(AnimeSrbijaFiltersData.GENRES, "genre"),
-            filters.parseCheckbox<SeasonFilter>(AnimeSrbijaFiltersData.SEASONS, "season"),
-            filters.parseCheckbox<TypeFilter>(AnimeSrbijaFiltersData.TYPES, "type"),
-            filters.parseCheckbox<YearFilter>(AnimeSrbijaFiltersData.YEARS, "year"),
-            filters.parseCheckbox<StudioFilter>(AnimeSrbijaFiltersData.STUDIOS, "studio"),
-            filters.parseCheckbox<TranslatorFilter>(AnimeSrbijaFiltersData.TRANSLATORS, "translator"),
-            filters.parseCheckbox<StatusFilter>(AnimeSrbijaFiltersData.STATUS, "status"),
+            filters.parseCheckbox<GenresFilter>(AnimeSrbijaFiltersData.GENRES, "genres"),
+            filters.parseCheckbox<SeasonFilter>(AnimeSrbijaFiltersData.SEASONS, "seasons"),
+            filters.parseCheckbox<TypeFilter>(AnimeSrbijaFiltersData.TYPES, "types"),
+            filters.parseCheckbox<YearFilter>(AnimeSrbijaFiltersData.YEARS, "years"),
+            filters.parseCheckbox<StudioFilter>(AnimeSrbijaFiltersData.STUDIOS, "studios"),
+            filters.parseCheckbox<TranslatorFilter>(AnimeSrbijaFiltersData.TRANSLATORS, "translators"),
+            filters.parseCheckbox<StatusFilter>(AnimeSrbijaFiltersData.STATUS, "statuses"),
         )
     }
 
