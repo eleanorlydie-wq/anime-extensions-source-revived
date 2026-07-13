@@ -33,7 +33,7 @@ import eu.kanade.tachiyomi.util.asJsoup
 import keiyoushi.utils.getPreferencesLazy
 import keiyoushi.utils.parallelCatchingFlatMapBlocking
 import keiyoushi.utils.parseAs
-import keiyoushi.utils.toJsonRequestBody
+import keiyoushi.utils.toJsonBody
 import keiyoushi.utils.useAsJsoup
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -182,7 +182,7 @@ class Doramasflix :
                 $$"{\"operationName\":\"listSeasons\",\"variables\":{\"serie_id\":\"$$id\"},\"query\":\"query listSeasons($serie_id: MongoID!) " +
                     $$"{\\n  listSeasons(sort: NUMBER_ASC, filter: {serie_id: $serie_id}) {\\n    slug\\n    season_number\\n    poster_path\\n    air_date\\n    " +
                     "serie_name\\n    poster\\n    backdrop\\n    __typename\\n  }\\n}\\n\"}"
-                ).toJsonRequestBody()
+                ).toJsonBody()
             POST("$apiUrl?id=$id", popularRequestHeaders, body)
         }
     }
@@ -207,7 +207,7 @@ class Doramasflix :
                     $$"listEpisodes($season_number: Float!, $serie_id: MongoID!) {\\n  listEpisodes(sort: NUMBER_ASC, filter: {type_serie: \\\"dorama\\\", " +
                     $$"serie_id: $serie_id, season_number: $season_number}) {\\n    _id\\n    name\\n    slug\\n    serie_name\\n    serie_name_es\\n    " +
                     "serie_id\\n    still_path\\n    air_date\\n    season_number\\n    episode_number\\n    languages\\n    poster\\n    backdrop\\n    __typename\\n  }\\n}\\n\"}"
-                ).toJsonRequestBody()
+                ).toJsonBody()
 
             val episodes = client.newCall(POST(apiUrl, popularRequestHeaders, body)).awaitSuccess()
                 .parseAs<EpisodeModel>(json)
@@ -251,7 +251,7 @@ class Doramasflix :
                 "backdrop_path\\n      first_air_date\\n      episode_run_time\\n      isTVShow\\n      poster\\n      backdrop\\n      genres {\\n        " +
                 "name\\n        slug\\n        __typename\\n      }\\n      networks {\\n        name\\n        slug\\n        __typename\\n      }\\n      " +
                 "__typename\\n    }\\n    __typename\\n  }\\n}\\n\"}"
-            ).toJsonRequestBody()
+            ).toJsonBody()
         return POST(apiUrl, popularRequestHeaders, body)
     }
 
@@ -326,7 +326,7 @@ class Doramasflix :
                 "backdrop_path\\n      first_air_date\\n      episode_run_time\\n      isTVShow\\n      poster\\n      backdrop\\n      genres {\\n        " +
                 "name\\n        slug\\n        __typename\\n      }\\n      networks {\\n        name\\n        slug\\n        __typename\\n      }\\n      " +
                 "__typename\\n    }\\n    __typename\\n  }\\n}\\n\"}"
-            ).toJsonRequestBody()
+            ).toJsonBody()
         return POST(apiUrl, popularRequestHeaders, body)
     }
 
@@ -382,7 +382,7 @@ class Doramasflix :
                 $$"searchDorama(input: $input, limit: 32) {\\n    _id\\n    slug\\n    name\\n    name_es\\n    poster_path\\n    poster\\n    " +
                 $$"__typename\\n  }\\n  searchMovie(input: $input, limit: 32) {\\n    _id\\n    name\\n    name_es\\n    slug\\n    poster_path\\n    " +
                 "poster\\n    __typename\\n  }\\n}\\n\"}"
-            ).toJsonRequestBody()
+            ).toJsonBody()
         return POST(apiUrl, popularRequestHeaders, body)
     }
 
@@ -395,7 +395,7 @@ class Doramasflix :
                 "languages\\n      popularity\\n      poster_path\\n      vote_average\\n      backdrop_path\\n      release_date\\n      runtime\\n      poster\\n      " +
                 "backdrop\\n      genres {\\n        name\\n        __typename\\n      }\\n      networks {\\n        name\\n        __typename\\n      }\\n      " +
                 "__typename\\n    }\\n    __typename\\n  }\\n}\\n\"}"
-            ).toJsonRequestBody()
+            ).toJsonBody()
 
         return POST(apiUrl, popularRequestHeaders, body)
     }
@@ -409,7 +409,7 @@ class Doramasflix :
                 "popularity\\n      poster_path\\n      vote_average\\n      backdrop_path\\n      first_air_date\\n      episode_run_time\\n      isTVShow\\n      poster\\n      " +
                 "backdrop\\n      genres {\\n        name\\n        slug\\n        __typename\\n      }\\n      networks {\\n        name\\n        slug\\n        " +
                 "__typename\\n      }\\n      __typename\\n    }\\n    __typename\\n  }\\n}\\n\"}"
-            ).toJsonRequestBody()
+            ).toJsonBody()
 
         return POST(apiUrl, popularRequestHeaders, body)
     }
@@ -476,7 +476,7 @@ class Doramasflix :
             .selectFirst("script:containsData({\"props\":{\"pageProps\":{)")?.data()
             ?.parseAs<TokenModel>()
 
-        val requestBody = "{\"token\":\"${token?.props?.pageProps?.token ?: token?.query?.token}\"}".toJsonRequestBody()
+        val requestBody = "{\"token\":\"${token?.props?.pageProps?.token ?: token?.query?.token}\"}".toJsonBody()
 
         val headersVideo = headers.newBuilder()
             .add("origin", "https://${link.toHttpUrl().host}")

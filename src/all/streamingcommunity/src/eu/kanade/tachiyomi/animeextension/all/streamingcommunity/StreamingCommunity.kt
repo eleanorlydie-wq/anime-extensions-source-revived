@@ -78,13 +78,25 @@ class StreamingCommunity(override val lang: String, private val showType: String
                 request = request.newBuilder()
                     .url(newUrlHttp)
                     .apply {
-                        apiHeaders["Origin"]?.let { header("Origin", it) }
-                        apiHeaders["Referer"]?.let { header("Referer", it) }
+                        jsonHeaders["Origin"]?.let { header("Origin", it) }
+                        jsonHeaders["Referer"]?.let { header("Referer", it) }
                     }
                     .build()
                 response = chain.proceed(request)
                 redirectCount++
             }
+
+            // The site's asset/API version (Inertia) can go stale between requests;
+            // refresh it and retry once instead of failing the whole page load.
+            if (response.code == 409 && request.header("X-Inertia") == "true") {
+                response.close()
+                inertiaVersion = fetchInertiaVersion()
+                request = request.newBuilder()
+                    .header("X-Inertia-Version", inertiaVersion)
+                    .build()
+                response = chain.proceed(request)
+            }
+
             if (redirectCount >= maxRedirects) {
                 response.close()
                 throw java.io.IOException("Too many redirects: $maxRedirects")
@@ -94,8 +106,6 @@ class StreamingCommunity(override val lang: String, private val showType: String
 
     override val baseUrl: String
         get() = "$homepage/$lang"
-    private val apiUrl: String
-        get() = "$homepage/api"
 
     override val supportsLatest = true
 
@@ -106,12 +116,6 @@ class StreamingCommunity(override val lang: String, private val showType: String
         classLoader = this::class.java.classLoader!!,
     )
 
-    private val apiHeadersRef by lazy { AtomicReference(newApiHeader()) }
-    private fun newApiHeader() = headers.newBuilder()
-        .add("Origin", homepage)
-        .add("Referer", "$homepage/")
-        .build()
-
     private val jsonHeadersRef by lazy { AtomicReference(newJsonHeader()) }
     private fun newJsonHeader() = headers.newBuilder()
         .add("Origin", homepage)
@@ -119,16 +123,26 @@ class StreamingCommunity(override val lang: String, private val showType: String
         .add("Content-Type", "application/json")
         .add("X-Requested-With", "XMLHttpRequest")
         .add("X-Inertia", "true")
-        .add("x-inertia-version", "") // This requires an up-to-date `version`
+        .add("X-Inertia-Version", inertiaVersion)
         .build()
-
-    private var apiHeaders: Headers
-        get() = apiHeadersRef.get()
-        set(value) = apiHeadersRef.set(value)
 
     private var jsonHeaders: Headers
         get() = jsonHeadersRef.get()
         set(value) = jsonHeadersRef.set(value)
+
+    // The site's browse/search data is now only served via Inertia partial
+    // reloads on regular page routes, which requires echoing back the site's
+    // current asset version or the request is rejected with a 409.
+    private val inertiaVersionRef by lazy { AtomicReference(fetchInertiaVersion()) }
+    private var inertiaVersion: String
+        get() = inertiaVersionRef.get()
+        set(value) = inertiaVersionRef.set(value)
+
+    private fun fetchInertiaVersion(): String = runCatching {
+        client.newCall(GET(baseUrl, headers)).execute().use {
+            json.decodeFromString<VersionResponse>(it.getData()).version
+        }
+    }.getOrDefault("")
 
     private val json: Json by injectLazy()
 
@@ -136,48 +150,26 @@ class StreamingCommunity(override val lang: String, private val showType: String
 
     // ============================== Popular ===============================
 
-    override fun popularAnimeRequest(page: Int): Request = when (page) {
-        1 -> GET("$apiUrl/browse/top10?lang=$lang&type=$showType", apiHeaders)
-
-        2 -> GET("$apiUrl/browse/trending?lang=$lang&type=$showType", apiHeaders)
-
-        else ->
-            GET("$apiUrl/archive?lang=$lang&offset=${(page - 3) * 60}&sort=views&type=$showType", apiHeaders)
-    }
+    // The site's old dedicated `/api/browse/*` endpoints are gone (404). Browsing
+    // is now served exclusively through Inertia partial reloads of `/{lang}/archive`.
+    override fun popularAnimeRequest(page: Int): Request = archiveRequest(sort = "views", page = page)
 
     private var imageCdn = "https://cdn.${baseUrl.toHttpUrl().host}/images/"
 
     override fun popularAnimeParse(response: Response): AnimesPage {
-        val path = response.request.url.encodedPath
-        val isApiCall = path.startsWith("/api/")
-        val isTop10Trending = path.contains(TOP10_TRENDING_REGEX)
-
-        val parsed: PropObject = if (isApiCall) {
-            json.decodeFromString<PropObject>(response.body.string())
-        } else {
-            json.decodeFromString<ShowsResponse>(response.body.string()).props
-                .also { props -> props.cdn_url?.takeIf { it.isNotBlank() }?.let { imageCdn = "$it/images/" } }
-        }
+        val parsed = json.decodeFromString<ShowsResponse>(response.getData()).props
+            .also { props -> props.cdn_url?.takeIf { it.isNotBlank() }?.let { imageCdn = "$it/images/" } }
 
         val animeList = parsed.titles.map { it.toSAnime(imageCdn) }
 
-        val hasNextPage = isTop10Trending || animeList.size == 60
+        val hasNextPage = animeList.size == 60
 
         return AnimesPage(animeList, hasNextPage)
     }
 
     // =============================== Latest ===============================
 
-    override fun latestUpdatesRequest(page: Int): Request = when (page) {
-        in 1..2 -> if (showType == "movie") {
-            GET("$apiUrl/browse/latest?lang=$lang&offset=${(page - 1) * 60}&type=$showType", apiHeaders)
-        } else {
-            GET("$apiUrl/browse/new-episodes?lang=$lang&offset=${(page - 1) * 60}&type=$showType", apiHeaders)
-        }
-
-        else ->
-            GET("$apiUrl/archive?lang=$lang&offset=${(page - 3) * 60}&sort=created_at&type=$showType", apiHeaders)
-    }
+    override fun latestUpdatesRequest(page: Int): Request = archiveRequest(sort = "created_at", page = page)
 
     override fun latestUpdatesParse(response: Response) = popularAnimeParse(response)
 
@@ -186,27 +178,33 @@ class StreamingCommunity(override val lang: String, private val showType: String
     override suspend fun getSearchAnime(page: Int, query: String, filters: AnimeFilterList): AnimesPage {
         val featuredFilter = filters.filterIsInstance<FeaturedFilter>().firstOrNull()
         if (query.isBlank() && featuredFilter?.isDefault() == false) {
-            val httpUrl = apiUrl.toHttpUrl().newBuilder().apply {
-                addPathSegments("browse/genre")
-                addQueryParameter(featuredFilter.uri, featuredFilter.toUriPart())
-            }.build()
-            return client.newCall(GET(httpUrl, apiHeaders))
+            val genreId = FEATURED_GENRE_IDS[featuredFilter.toUriPart()]
+            val httpUrlBuilder = "$baseUrl/archive".toHttpUrl().newBuilder().apply {
+                addQueryParameter("lang", lang)
+                addQueryParameter("type", showType)
+                addQueryParameter("offset", ((page - 1) * 60).toString())
+                genreId?.let { addQueryParameter("genre[]", it) }
+            }
+            return client.newCall(GET(httpUrlBuilder.build(), jsonHeaders))
                 .awaitSuccess()
                 .use(::searchAnimeParse)
-                .let {
-                    // Limited to only 120 results (2 pages)
-                    if (page == 2) {
-                        it.copy(hasNextPage = false)
-                    } else {
-                        it
-                    }
-                }
         } else {
             val request = searchAnimeRequest(page, query, filters)
             return client.newCall(request)
                 .awaitSuccess()
                 .use(::searchAnimeParse)
         }
+    }
+
+    private fun archiveRequest(sort: String, page: Int): Request {
+        val httpUrl = "$baseUrl/archive".toHttpUrl().newBuilder().apply {
+            addQueryParameter("lang", lang)
+            addQueryParameter("type", showType)
+            addQueryParameter("sort", sort)
+            addQueryParameter("offset", ((page - 1) * 60).toString())
+        }.build()
+
+        return GET(httpUrl, jsonHeaders)
     }
 
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
@@ -218,9 +216,8 @@ class StreamingCommunity(override val lang: String, private val showType: String
         val qualityFilter = filters.filterIsInstance<QualityFilter>().firstOrNull()
         val ageFilter = filters.filterIsInstance<AgeFilter>().firstOrNull()
 
-        val httpUrlBuilder = apiUrl.toHttpUrl().newBuilder()
+        val httpUrlBuilder = "$baseUrl/archive".toHttpUrl().newBuilder()
         httpUrlBuilder.apply {
-            addPathSegments("archive")
             addQueryParameter("search", query)
             if (sortFilter?.isDefault() == false) {
                 addQueryParameter(sortFilter.uri, sortFilter.toUriPart())
@@ -250,20 +247,13 @@ class StreamingCommunity(override val lang: String, private val showType: String
             addQueryParameter("offset", ((page - 1) * 60).toString())
         }
 
-        return GET(httpUrlBuilder.build(), apiHeaders)
+        return GET(httpUrlBuilder.build(), jsonHeaders)
     }
 
     override fun searchAnimeParse(response: Response): AnimesPage {
-        val path = response.request.url.encodedPath
-        val isApiCall = path.startsWith("/api/")
-
-        val parsed = if (isApiCall) {
-            json.decodeFromString<PropObject>(response.getData()).titles
-        } else {
-            json.decodeFromString<ShowsResponse>(response.getData()).props
-                .also { props -> props.cdn_url?.takeIf { it.isNotBlank() }?.let { imageCdn = "$it/images/" } }
-                .titles
-        }
+        val parsed = json.decodeFromString<ShowsResponse>(response.getData()).props
+            .also { props -> props.cdn_url?.takeIf { it.isNotBlank() }?.let { imageCdn = "$it/images/" } }
+            .titles
 
         val animeList = parsed.map {
             it.toSAnime(imageCdn)
@@ -475,11 +465,36 @@ class StreamingCommunity(override val lang: String, private val showType: String
         private const val PREF_CUSTOM_DOMAIN_KEY = "custom_domain_v${BuildConfig.VERSION_NAME}"
         private const val TAG = "StreamingCommunity"
 
-        private val TOP10_TRENDING_REGEX = Regex("""/browse/(top10|trending)""")
         private val PLAYLIST_URL_REGEX = Regex("""url: ?'(.*?)'""")
         private val EXPIRES_REGEX = Regex("""'expires': ?'(\d+)'""")
         private val TOKEN_REGEX = Regex("""'token': ?'([\w-]+)'""")
         private val QUALITY_REGEX = Regex("""(\d+)p""")
+
+        // Maps FeaturedFilter's genre name to the numeric genre id used by `/archive`
+        // (the old dedicated `/api/browse/genre?g=<name>` endpoint is gone).
+        private val FEATURED_GENRE_IDS = mapOf(
+            "Action" to "4",
+            "Adventure" to "11",
+            "Animation" to "19",
+            "Comedy" to "12",
+            "Crime" to "2",
+            "Documentary" to "24",
+            "Drama" to "1",
+            "Family" to "16",
+            "Fantasy" to "8",
+            "History" to "22",
+            "Horror" to "7",
+            "Korean drama" to "26",
+            "Music" to "14",
+            "Mystery" to "6",
+            "News" to "37",
+            "Romance" to "15",
+            "Science Fiction" to "10",
+            "Thriller" to "5",
+            "TV Movie" to "21",
+            "War" to "9",
+            "Western" to "20",
+        )
 
         private const val PREF_QUALITY_KEY = "preferred_quality"
         private val PREF_QUALITY_ENTRIES = listOf("1080p", "720p", "480p", "360p")
@@ -519,7 +534,7 @@ class StreamingCommunity(override val lang: String, private val showType: String
             Log.i(TAG, "Updating domain to: $newDomain")
             preferences.customDomain = newDomain
             homepage = newDomain
-            apiHeaders = newApiHeader()
+            inertiaVersion = fetchInertiaVersion()
             jsonHeaders = newJsonHeader()
         }
     }

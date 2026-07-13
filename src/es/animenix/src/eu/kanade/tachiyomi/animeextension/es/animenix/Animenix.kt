@@ -1,206 +1,88 @@
 package eu.kanade.tachiyomi.animeextension.es.animenix
 
-import androidx.preference.CheckBoxPreference
-import androidx.preference.ListPreference
+import android.content.SharedPreferences
 import androidx.preference.PreferenceScreen
 import aniyomi.lib.filemoonextractor.FilemoonExtractor
 import aniyomi.lib.streamwishextractor.StreamWishExtractor
 import aniyomi.lib.universalextractor.UniversalExtractor
-import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
+import aniyomi.lib.vidguardextractor.VidGuardExtractor
+import aniyomi.lib.voeextractor.VoeExtractor
+import aniyomi.lib.youruploadextractor.YourUploadExtractor
 import eu.kanade.tachiyomi.animesource.model.Video
-import eu.kanade.tachiyomi.multisrc.dooplay.DooPlay
-import eu.kanade.tachiyomi.network.GET
-import eu.kanade.tachiyomi.network.POST
-import eu.kanade.tachiyomi.network.awaitSuccess
-import keiyoushi.utils.bodyString
-import keiyoushi.utils.parallelCatchingFlatMapBlocking
-import keiyoushi.utils.useAsJsoup
-import okhttp3.FormBody
-import okhttp3.Request
-import okhttp3.Response
-import org.jsoup.nodes.Document
-import org.jsoup.nodes.Element
+import eu.kanade.tachiyomi.multisrc.animestream.AnimeStream
+import keiyoushi.utils.addListPreference
+import keiyoushi.utils.delegate
+import keiyoushi.utils.getPreferencesLazy
 
 class Animenix :
-    DooPlay(
+    AnimeStream(
         "es",
         "Animenix",
         "https://animenix.com",
     ) {
 
-    // ============================== Popular ===============================
-    override fun popularAnimeRequest(page: Int) = GET("$baseUrl/ratings/$page")
+    override val preferences by getPreferencesLazy()
 
-    override fun popularAnimeSelector() = latestUpdatesSelector()
+    override val prefQualityDefault = "1080p"
+    override val prefQualityValues = listOf("1080p", "720p", "480p", "360p")
 
-    override fun popularAnimeNextPageSelector() = latestUpdatesNextPageSelector()
-
-    // =============================== Search ===============================
-
-    // ============================== Episodes ==============================
-    override val episodeMovieText = "Película"
-
-    override fun videoListParse(response: Response): List<Video> {
-        val players = response.useAsJsoup().select("li.dooplay_player_option")
-        return players.parallelCatchingFlatMapBlocking { player ->
-            val link = getPlayerUrl(player)
-            getPlayerVideos(link)
-        }
+    companion object {
+        private const val PREF_SERVER_KEY = "preferred_server"
+        private const val PREF_SERVER_DEFAULT = "Voe"
+        private val SERVER_LIST = listOf(
+            "Voe",
+            "VidGuard",
+            "YourUpload",
+            "Filemoon",
+            "StreamWish",
+        )
     }
 
-    private suspend fun getPlayerUrl(player: Element): String {
-        val body = FormBody.Builder()
-            .add("action", "doo_player_ajax")
-            .add("post", player.attr("data-post"))
-            .add("nume", player.attr("data-nume"))
-            .add("type", player.attr("data-type"))
-            .build()
-        return client.newCall(POST("$baseUrl/wp-admin/admin-ajax.php", headers, body))
-            .awaitSuccess().bodyString()
-            .substringAfter("\"embed_url\":\"")
-            .substringBefore("\",")
-            .replace("\\", "")
-    }
-
+    // ============================ Video Links =============================
+    private val voeExtractor by lazy { VoeExtractor(client, headers) }
+    private val vidGuardExtractor by lazy { VidGuardExtractor(client) }
+    private val youruploadExtractor by lazy { YourUploadExtractor(client) }
     private val filemoonExtractor by lazy { FilemoonExtractor(client) }
     private val streamWishExtractor by lazy { StreamWishExtractor(headers = headers, client = client) }
     private val universalExtractor by lazy { UniversalExtractor(client) }
 
-    private suspend fun getPlayerVideos(link: String): List<Video> = when {
-        link.contains("filemoon") -> filemoonExtractor.videosFromUrl(link)
-        link.contains("swdyu") -> streamWishExtractor.videosFromUrl(link)
-        link.contains("wishembed") || link.contains("cdnwish") || link.contains("flaswish") || link.contains("sfastwish") || link.contains("streamwish") || link.contains("asnwish") ->
-            streamWishExtractor.videosFromUrl(link)
-        else -> universalExtractor.videosFromUrl(link, headers)
+    override suspend fun getVideoList(url: String, name: String): List<Video> = when {
+        url.contains("voe") -> voeExtractor.videosFromUrl(url)
+        url.contains("vgfplay") || url.contains("vembed") || url.contains("vidguard") || url.contains("listeamed") ->
+            vidGuardExtractor.videosFromUrl(url)
+        url.contains("yourupload") -> youruploadExtractor.videoFromUrl(url, headers)
+        url.contains("filemoon") -> filemoonExtractor.videosFromUrl(url)
+        url.contains("wishembed") || url.contains("cdnwish") || url.contains("flaswish") ||
+            url.contains("sfastwish") || url.contains("streamwish") || url.contains("asnwish") ->
+            streamWishExtractor.videosFromUrl(url)
+        else -> universalExtractor.videosFromUrl(url, headers)
     }
 
-    // =========================== Anime Details ============================
-    override fun Document.getDescription(): String = select("$additionalInfoSelector div.wp-content p")
-        .eachText()
-        .joinToString("\n")
-
-    override val additionalInfoItems = listOf("Título", "Temporadas", "Episodios", "Duración media")
-
-    // =============================== Latest ===============================
-
-    override fun latestUpdatesRequest(page: Int) = GET("$baseUrl/ver/page/$page", headers)
-
-    override fun latestUpdatesNextPageSelector() = "div.pagination > *:last-child:not(span):not(.current)"
-
-    // =============================== Search ===============================
-    override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
-        val params = AnimenixFilters.getSearchParameters(filters)
-        val path = when {
-            params.genre.isNotBlank() -> {
-                if (params.genre in listOf("tendencias", "ratings")) {
-                    "/" + params.genre
-                } else {
-                    "/genero/${params.genre}"
-                }
-            }
-
-            params.language.isNotBlank() -> "/genero/${params.language}"
-
-            params.year.isNotBlank() -> "/release/${params.year}"
-
-            params.movie.isNotBlank() -> {
-                if (params.movie == "pelicula") {
-                    "/pelicula"
-                } else {
-                    "/genero/${params.movie}"
-                }
-            }
-
-            else -> buildString {
-                append(
-                    when {
-                        query.isNotBlank() -> "/?s=$query"
-                        params.letter.isNotBlank() -> "/letra/${params.letter}/?"
-                        else -> "/tendencias/?"
-                    },
-                )
-
-                append(
-                    if (contains("tendencias")) {
-                        "&get=${when (params.type){
-                            "anime" -> "serie"
-                            "pelicula" -> "pelicula"
-                            else -> "todos"
-                        }}"
-                    } else {
-                        "&tipo=${params.type}"
-                    },
-                )
-
-                if (params.isInverted) append("&orden=asc")
-            }
-        }
-
-        return if (path.startsWith("/?s=")) {
-            GET("$baseUrl/page/$page$path")
-        } else if (path.startsWith("/letra") || path.startsWith("/tendencias")) {
-            val before = path.substringBeforeLast("/")
-            val after = path.substringAfterLast("/")
-            GET("$baseUrl$before/page/$page/$after")
-        } else {
-            GET("$baseUrl$path/page/$page")
-        }
-    }
-
-    // ============================== Filters ===============================
-    override val fetchGenres = false
-
-    override fun getFilterList() = AnimenixFilters.FILTER_LIST
-
-    // ============================== Settings ==============================
-    override fun setupPreferenceScreen(screen: PreferenceScreen) {
-        super.setupPreferenceScreen(screen) // Quality preference
-
-        val langPref = ListPreference(screen.context).apply {
-            key = PREF_LANG_KEY
-            title = PREF_LANG_TITLE
-            entries = PREF_LANG_ENTRIES
-            entryValues = PREF_LANG_VALUES
-            setDefaultValue(PREF_LANG_DEFAULT)
-            summary = "%s"
-        }
-
-        val vrfIterceptPref = CheckBoxPreference(screen.context).apply {
-            key = PREF_VRF_INTERCEPT_KEY
-            title = PREF_VRF_INTERCEPT_TITLE
-            summary = PREF_VRF_INTERCEPT_SUMMARY
-            setDefaultValue(PREF_VRF_INTERCEPT_DEFAULT)
-        }
-
-        screen.addPreference(vrfIterceptPref)
-        screen.addPreference(langPref)
-    }
+    private val SharedPreferences.serverPref by preferences.delegate(PREF_SERVER_KEY, PREF_SERVER_DEFAULT)
 
     // ============================= Utilities ==============================
     override fun List<Video>.sort(): List<Video> {
-        val quality = preferences.getString(prefQualityKey, prefQualityDefault)!!
-        val lang = preferences.getString(PREF_LANG_KEY, PREF_LANG_DEFAULT)!!
+        val quality = preferences.videoSortPref
+        val server = preferences.serverPref
         return sortedWith(
             compareBy(
-                { it.quality.contains(lang) },
+                { it.quality.contains(server, true) },
                 { it.quality.contains(quality) },
             ),
         ).reversed()
     }
 
-    override val prefQualityValues = arrayOf("480p", "720p", "1080p")
-    override val prefQualityEntries = prefQualityValues
+    // ============================== Settings ==============================
+    override fun setupPreferenceScreen(screen: PreferenceScreen) {
+        super.setupPreferenceScreen(screen) // Quality preference
 
-    companion object {
-        private const val PREF_LANG_KEY = "preferred_lang"
-        private const val PREF_LANG_TITLE = "Preferred language"
-        private const val PREF_LANG_DEFAULT = "SUB"
-        private val PREF_LANG_ENTRIES = arrayOf("SUB", "All", "ES", "LAT")
-        private val PREF_LANG_VALUES = arrayOf("SUB", "", "ES", "LAT")
-
-        private const val PREF_VRF_INTERCEPT_KEY = "vrf_intercept"
-        private const val PREF_VRF_INTERCEPT_TITLE = "Intercept VRF links (Requiere Reiniciar)"
-        private const val PREF_VRF_INTERCEPT_SUMMARY = "Intercept VRF links and open them in the browser"
-        private const val PREF_VRF_INTERCEPT_DEFAULT = false
+        screen.addListPreference(
+            key = PREF_SERVER_KEY,
+            title = "Preferred server",
+            entries = SERVER_LIST,
+            entryValues = SERVER_LIST,
+            default = PREF_SERVER_DEFAULT,
+            summary = "%s",
+        )
     }
 }

@@ -13,13 +13,7 @@ import aniyomi.lib.streamtapeextractor.StreamTapeExtractor
 import aniyomi.lib.uqloadextractor.UqloadExtractor
 import aniyomi.lib.voeextractor.VoeExtractor
 import aniyomi.lib.vudeoextractor.VudeoExtractor
-import eu.kanade.tachiyomi.animeextension.tr.animeler.dto.AnimeEpisodes
-import eu.kanade.tachiyomi.animeextension.tr.animeler.dto.FullAnimeDto
-import eu.kanade.tachiyomi.animeextension.tr.animeler.dto.SearchRequestDto
-import eu.kanade.tachiyomi.animeextension.tr.animeler.dto.SearchResponseDto
-import eu.kanade.tachiyomi.animeextension.tr.animeler.dto.SingleDto
-import eu.kanade.tachiyomi.animeextension.tr.animeler.dto.SourcesDto
-import eu.kanade.tachiyomi.animeextension.tr.animeler.dto.VideoDto
+import eu.kanade.tachiyomi.animeextension.tr.animeler.dto.SourceUrlDto
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
@@ -34,15 +28,12 @@ import eu.kanade.tachiyomi.util.asJsoup
 import keiyoushi.utils.getPreferencesLazy
 import keiyoushi.utils.parallelCatchingFlatMapBlocking
 import keiyoushi.utils.parseAs
-import keiyoushi.utils.toJsonRequestBody
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
 import okhttp3.FormBody
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
 import okhttp3.Response
-import org.jsoup.Jsoup
-import uy.kohesive.injekt.injectLazy
+import org.jsoup.nodes.Document
+import org.jsoup.nodes.Element
 import java.text.SimpleDateFormat
 import java.util.Locale
 
@@ -58,33 +49,27 @@ class Animeler :
 
     override val supportsLatest = true
 
-    private val json: Json by injectLazy()
-
     private val preferences by getPreferencesLazy()
 
     // ============================== Popular ===============================
-    override fun popularAnimeRequest(page: Int) = searchOrderBy("total_kiranime_views", page)
+    override fun popularAnimeRequest(page: Int) = GET("$baseUrl/filter?sort=popular&page=$page")
 
     override fun popularAnimeParse(response: Response): AnimesPage {
-        val results = response.parseAs<SearchResponseDto>()
-        val doc = Jsoup.parseBodyFragment(results.data)
-        val animes = doc.select("div.w-full:has(div.kira-anime)").map {
-            SAnime.create().apply {
-                thumbnail_url = it.selectFirst("img")?.attr("src")
-                with(it.selectFirst("h3 > a")!!) {
-                    title = text()
-                    setUrlWithoutDomain(attr("href"))
-                }
-            }
-        }
-
-        val page = response.request.url.queryParameter("page")?.toIntOrNull() ?: 1
-        val hasNextPage = page < results.pages
+        val document = response.asJsoup()
+        val animes = document.select("a.anime-card-modern").map(::parseAnimeElement)
+        val hasNextPage = document.selectFirst("a[rel=next]") != null
         return AnimesPage(animes, hasNextPage)
     }
 
+    private fun parseAnimeElement(element: Element): SAnime = SAnime.create().apply {
+        setUrlWithoutDomain(element.attr("href"))
+        thumbnail_url = element.selectFirst("img")?.attr("src")
+        title = element.selectFirst("div.anime-title-strip")?.text()
+            ?: element.attr("title")
+    }
+
     // =============================== Latest ===============================
-    override fun latestUpdatesRequest(page: Int) = searchOrderBy("kiranime_anime_updated", page)
+    override fun latestUpdatesRequest(page: Int) = GET("$baseUrl/filter?sort=updated&page=$page")
 
     override fun latestUpdatesParse(response: Response) = popularAnimeParse(response)
 
@@ -95,14 +80,14 @@ class Animeler :
             if (url.host != baseUrl.toHttpUrl().host) {
                 throw Exception("Unsupported url")
             }
-            val id = url.pathSegments.getOrNull(1)
+            val id = url.pathSegments.getOrNull(0)?.takeIf { it.isNotBlank() }
                 ?: throw Exception("Unsupported url")
             return getSearchAnime(page, "${PREFIX_SEARCH}$id", filters)
         }
 
         if (query.startsWith(PREFIX_SEARCH)) {
             val id = query.removePrefix(PREFIX_SEARCH)
-            return client.newCall(GET("$baseUrl/anime/$id"))
+            return client.newCall(GET("$baseUrl/$id"))
                 .awaitSuccess()
                 .use(::searchAnimeByIdParse)
         }
@@ -123,105 +108,78 @@ class Animeler :
 
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
         val params = AnimelerFilters.getSearchParameters(filters)
-        val (meta, orderBy) = when (params.orderBy) {
-            "date", "title" -> Pair(null, params.orderBy)
-            else -> Pair(params.orderBy, "meta_value_num")
-        }
+        val url = "$baseUrl/filter".toHttpUrl().newBuilder().apply {
+            addQueryParameter("page", page.toString())
+            addQueryParameter("sort", params.sort)
+            if (query.isNotBlank()) addQueryParameter("search", query)
+            params.category.forEach { addQueryParameter("category[]", it) }
+            params.type.forEach { addQueryParameter("type[]", it) }
+            params.genre.forEach { addQueryParameter("genre[]", it) }
+            params.year.forEach { addQueryParameter("year[]", it) }
+            params.season.forEach { addQueryParameter("season[]", it) }
+            params.status.forEach { addQueryParameter("status[]", it) }
+        }.build()
 
-        val single = SingleDto(
-            paged = page,
-            key = meta,
-            order = params.order,
-            orderBy = orderBy,
-            season = params.season.ifEmpty { null },
-            year = params.year.ifEmpty { null },
-        )
-
-        val taxonomies = with(params) {
-            listOf(genres, status, producers, studios, types).filter {
-                it.terms.isNotEmpty()
-            }
-        }
-
-        val requestDto = SearchRequestDto(single, query, query, taxonomies)
-        val requestData = json.encodeToString(requestDto)
-        return searchRequest(requestData, page)
+        return GET(url.toString())
     }
 
     override fun searchAnimeParse(response: Response) = popularAnimeParse(response)
 
-    private fun searchOrderBy(order: String, page: Int): Request {
-        val body = """
-            {
-              "keyword": "",
-              "query": "",
-              "single": {
-                "paged": $page,
-                "orderby": "meta_value_num",
-                "meta_key": "$order",
-                "order": "desc"
-              },
-              "tax": []
-            }
-        """.trimIndent()
-        return searchRequest(body, page)
-    }
-
-    private fun searchRequest(data: String, page: Int): Request {
-        val body = data.toJsonRequestBody()
-        return POST("$baseUrl/wp-json/kiranime/v1/anime/advancedsearch?_locale=user&page=$page", headers, body)
-    }
-
     // =========================== Anime Details ============================
-    private inline fun <reified T> Response.parseBody(): T {
-        val body = use { it.body.string() }
-            .substringAfter("const anime = ")
-            .substringBefore("};") + "}"
+    override fun animeDetailsParse(response: Response): SAnime {
+        val document = response.asJsoup()
 
-        return json.decodeFromString<T>(body)
-    }
+        return SAnime.create().apply {
+            title = document.selectFirst("h1.adp-hero__title")?.text()
+                ?.removeSuffix(" İzle")?.trim()
+                ?: document.title()
+            thumbnail_url = document.selectFirst("div.adp-hero__poster img")?.attr("src")
 
-    override fun animeDetailsParse(response: Response) = SAnime.create().apply {
-        val animeDto = response.parseBody<FullAnimeDto>()
+            val genreRow = kvRow(document, "Türler")
+            genre = genreRow?.select("span.adp-hero__kv-pill")?.joinToString { it.text() }
+            artist = kvValue(document, "Stüdyo")
 
-        setUrlWithoutDomain(animeDto.url)
-        thumbnail_url = animeDto.thumbnail
-        title = animeDto.title
-        artist = animeDto.studios
-        author = animeDto.producers
-        genre = animeDto.genres
-        status = when {
-            animeDto.meta.aired.orEmpty().contains(" to ") -> SAnime.COMPLETED
-            else -> SAnime.UNKNOWN
-        }
+            status = when (kvValue(document, "Durum")) {
+                "Tamamlandı" -> SAnime.COMPLETED
+                "Yayında" -> SAnime.ONGOING
+                else -> SAnime.UNKNOWN
+            }
 
-        description = buildString {
-            animeDto.post.post_content?.also { append(it + "\n") }
-
-            with(animeDto.meta) {
-                score?.takeIf(String::isNotBlank)?.also { append("\nScore: $it") }
-                native?.takeIf(String::isNotBlank)?.also { append("\nNative: $it") }
-                synonyms?.takeIf(String::isNotBlank)?.also { append("\nDiğer İsimleri: $it") }
-                rate?.takeIf(String::isNotBlank)?.also { append("\nRate: $it") }
-                premiered?.takeIf(String::isNotBlank)?.also { append("\nPremiered: $it") }
-                aired?.takeIf(String::isNotBlank)?.also { append("\nYayınlandı: $it") }
-                duration?.takeIf(String::isNotBlank)?.also { append("\nSüre: $it") }
+            description = buildString {
+                val synopsis = document.selectFirst("div#overviewFull")?.text()?.takeIf { it.isNotBlank() }
+                    ?: document.selectFirst("p.adp-synopsis__text")?.text()
+                synopsis?.let { append(it) }
+                kvValue(document, "İngilizce")?.takeIf { it.isNotBlank() }?.let { append("\n\nİngilizce: $it") }
+                kvValue(document, "Japonca")?.takeIf { it.isNotBlank() }?.let { append("\nJaponca: $it") }
+                kvValue(document, "Alternatif isimler")?.takeIf { it.isNotBlank() }
+                    ?.let { append("\nAlternatif isimler: $it") }
             }
         }
     }
+
+    private fun kvRow(document: Document, label: String): Element? =
+        document.select("div.adp-hero__kv-row").firstOrNull {
+            it.selectFirst("span.adp-hero__kv-label")?.text() == label
+        }
+
+    private fun kvValue(document: Document, label: String): String? =
+        kvRow(document, label)?.selectFirst("span.adp-hero__kv-value")?.text()
 
     // ============================== Episodes ==============================
     override fun episodeListParse(response: Response): List<SEpisode> {
-        val episodes = response.parseBody<AnimeEpisodes>().episodes
+        val document = response.asJsoup()
 
-        return episodes.map {
-            SEpisode.create().apply {
-                setUrlWithoutDomain(it.url)
-                name = "Bölüm " + it.meta.number
-                episode_number = it.meta.number.toFloat()
-                date_upload = it.date.toDate()
+        return document.select("a.ep-list-item[data-ep-id]")
+            .distinctBy { it.attr("data-ep-id") }
+            .map {
+                val number = it.attr("data-ep-num")
+                SEpisode.create().apply {
+                    setUrlWithoutDomain(it.attr("href"))
+                    episode_number = number.toFloatOrNull() ?: 1F
+                    name = "Bölüm $number"
+                    date_upload = it.selectFirst("span.ep-list-date")?.text()?.let(::toDate) ?: 0L
+                }
             }
-        }
     }
 
     // ============================ Video Links =============================
@@ -237,44 +195,47 @@ class Animeler :
     private val vudeoExtractor by lazy { VudeoExtractor(client) }
 
     override fun videoListParse(response: Response): List<Video> {
-        val doc = response.asJsoup()
-        val iframeUrl = doc.selectFirst("div.episode-player-box > iframe")
-            ?.run { attr("data-src").ifBlank { attr("src") } }
-            ?: doc.selectFirst("script:containsData(embedUrl)")
-                ?.data()
-                ?.substringAfter("\"embedUrl\": \"")
-                ?.substringBefore('"')
-            ?: throw Exception("No video available.")
-
-        val playerBody = { it: String ->
-            FormBody.Builder()
-                .add("hash", iframeUrl.substringAfter("/video/"))
-                .add("r", "$baseUrl/")
-                .add("s", it)
-                .build()
-        }
-
-        val headers = headersBuilder()
-            .add("Origin", "https://" + iframeUrl.toHttpUrl().host) // just to be sure
-            .add("X-Requested-With", "XMLHttpRequest")
-            .build()
-
-        val actionUrl = "$iframeUrl?do=getVideo"
-
-        val players = client.newCall(POST(actionUrl, headers, playerBody(""))).execute()
-            .parseAs<SourcesDto>()
+        val document = response.asJsoup()
+        val csrfToken = document.selectFirst("meta[name=csrf-token]")?.attr("content")
+            ?: return emptyList()
+        val refererUrl = response.request.url.toString()
 
         val chosenHosts = preferences.getStringSet(PREF_HOSTS_SELECTION_KEY, SUPPORTED_PLAYERS)!!
 
-        val filteredSources = players.sourceList.entries.filter { source ->
-            chosenHosts.any { it.contains(source.value, true) }
-        }
+        val sourceIds = document.select("button.video-source-btn[data-source-id]")
+            .mapNotNull { button ->
+                val id = button.attr("data-source-id").toIntOrNull() ?: return@mapNotNull null
+                val sourceName = button.selectFirst("span.source-name")?.text().orEmpty()
+                id to sourceName
+            }
+            .distinctBy { it.first }
+            .filter { (_, sourceName) -> chosenHosts.any { sourceName.contains(it, ignoreCase = true) } }
+            .map { it.first }
 
-        return filteredSources.parallelCatchingFlatMapBlocking {
-            val body = playerBody(it.key)
-            val res = client.newCall(POST(actionUrl, headers, body)).awaitSuccess()
-                .parseAs<VideoDto>()
-            videosFromUrl(res.videoSrc)
+        return sourceIds.parallelCatchingFlatMapBlocking { sourceId ->
+            val body = FormBody.Builder()
+                .add("_token", csrfToken)
+                .add("source_id", sourceId.toString())
+                .build()
+
+            val ajaxHeaders = headers.newBuilder()
+                .add("X-Requested-With", "XMLHttpRequest")
+                .add("Accept", "application/json")
+                .add("Referer", refererUrl)
+                .build()
+
+            val result = client.newCall(POST("$baseUrl/ajax/get-source-url", ajaxHeaders, body))
+                .awaitSuccess()
+                .parseAs<SourceUrlDto>()
+
+            val embedUrl = result.url
+            if (!result.success || embedUrl.isNullOrBlank()) {
+                emptyList()
+            } else {
+                val embedDoc = client.newCall(GET(embedUrl, headers)).awaitSuccess().asJsoup()
+                val playerUrl = embedDoc.selectFirst("iframe#innerPlayer")?.attr("src")
+                if (playerUrl.isNullOrBlank()) emptyList() else videosFromUrl(playerUrl)
+            }
         }
     }
 
@@ -339,7 +300,7 @@ class Animeler :
 
     // ============================= Utilities ==============================
 
-    private fun String.toDate(): Long = runCatching { DATE_FORMATTER.parse(trim())?.time }
+    private fun toDate(dateStr: String): Long = runCatching { DATE_FORMATTER.parse(dateStr.trim())?.time }
         .getOrNull() ?: 0L
 
     private val qualityRegex by lazy { Regex("""(\d+)p""") }
@@ -357,7 +318,7 @@ class Animeler :
 
     companion object {
         private val DATE_FORMATTER by lazy {
-            SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.ENGLISH)
+            SimpleDateFormat("dd.MM.yyyy", Locale.ENGLISH)
         }
 
         const val PREFIX_SEARCH = "id:"

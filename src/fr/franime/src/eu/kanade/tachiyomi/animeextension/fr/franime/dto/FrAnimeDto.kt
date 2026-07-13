@@ -38,7 +38,7 @@ private object BigIntegerSerializer : KSerializer<BigInteger> {
 data class Anime(
     @SerialName("themes") val genres: List<String>,
     @SerialName("saisons") val seasons: List<Season>,
-    @SerialName("_id") val uid: String?,
+    @SerialName("_id") val uid: String? = null,
     @SerialName("id") val id: BigIntegerJson,
     @SerialName("source_url") val sourceUrl: String,
     @SerialName("banner") val banner: String?,
@@ -53,9 +53,9 @@ data class Anime(
     @SerialName("endDate") val endDate: String?, // ditto
     @SerialName("status") val status: String,
     @SerialName("nsfw") val nsfw: Boolean,
-    @SerialName("__v") val uuv: Int?, // no idea wtf is this
-    @SerialName("affiche_small") val posterSmall: String?,
-    @SerialName("updatedDate") val updateTime: Long?, // deserialize as timestamp
+    @SerialName("__v") val uuv: Int? = null, // no idea wtf is this
+    @SerialName("affiche_small") val posterSmall: String? = null,
+    @SerialName("updatedDate") val updateTime: Long? = null, // deserialize as timestamp
 )
 
 @Serializable
@@ -83,7 +83,7 @@ data class EpisodeLanguage(
 
 @Serializable
 data class TitlesAlt(
-    @SerialName("en") val en: String?,
-    @SerialName("en_jp") val enJp: String?,
-    @SerialName("ja_jp") val jaJp: String?,
+    @SerialName("en") val en: String? = null,
+    @SerialName("en_jp") val enJp: String? = null,
+    @SerialName("ja_jp") val jaJp: String? = null,
 )

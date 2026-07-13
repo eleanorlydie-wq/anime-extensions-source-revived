@@ -14,7 +14,7 @@ data class PopularResponseDto(
 @Serializable
 data class PopularItemDto(
     val title: String,
-    val title_en: String?,
+    val title_en: String? = null,
     val slug: String,
     val poster: PosterDto,
 )
@@ -61,7 +61,7 @@ data class AnimeInfoDto(
     val status: String,
     val synopsis: String?,
     val title: String,
-    val title_en: String?,
+    val title_en: String? = null,
     val year: Int?,
 )
 
