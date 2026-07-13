@@ -69,27 +69,25 @@ class HentaiTorrent :
 
     // =============================== Search ===============================
     override suspend fun getSearchAnime(page: Int, query: String, filters: AnimeFilterList): AnimesPage {
-        if (query.startsWith("https://")) {
-            val url = query.toHttpUrl()
-            if (url.host != baseUrl.toHttpUrl().host) {
+        // Open a shared/deep-linked detail URL directly. Detail pages are top-level
+        // slugs (e.g. /ptcen-kiya-shii-22505.html), so the page IS the anime.
+        val url = query.removePrefix(PREFIX_SEARCH)
+        if (url.startsWith("https://")) {
+            if (url.toHttpUrl().host != baseUrl.toHttpUrl().host) {
                 throw Exception("Unsupported url")
             }
-            val id = url.pathSegments.getOrNull(1)
-                ?: throw Exception("Unsupported url")
-            return getSearchAnime(page, "${PREFIX_SEARCH}$id", filters)
-        }
-        if (query.startsWith(PREFIX_SEARCH)) {
-            val id = query.removePrefix(PREFIX_SEARCH)
-            return client.newCall(GET("$baseUrl/anime/$id"))
+            return client.newCall(GET(url))
                 .awaitSuccess()
-                .use(::searchAnimeByIdParse)
+                .use(::searchAnimeByUrlParse)
         }
         return super.getSearchAnime(page, query, filters)
     }
 
-    private fun searchAnimeByIdParse(response: Response): AnimesPage {
-        val details = animeDetailsParse(response.use { it.asJsoup() })
-        return AnimesPage(listOf(details), false)
+    private fun searchAnimeByUrlParse(response: Response): AnimesPage {
+        val anime = animeDetailsParse(response.asJsoup()).apply {
+            setUrlWithoutDomain(response.request.url.toString())
+        }
+        return AnimesPage(listOf(anime), false)
     }
 
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
@@ -114,6 +112,9 @@ class HentaiTorrent :
     // =========================== Anime Details ============================
     override fun animeDetailsParse(document: Document): SAnime {
         val anime = SAnime.create()
+        // Set only when found so the browse flow's title/thumbnail (from the listing) are never blanked.
+        document.selectFirst("h1")?.text()?.trim()?.let { anime.title = it }
+        document.selectFirst("img[src*=pic.hentaitorrents.com]")?.attr("abs:src")?.let { anime.thumbnail_url = it }
         anime.description = document.select("div.article-content").html().replace(Regex("<(?!br\\s*/?)[^>]+>"), "").replace("<br>", "\n").replace("<br/>", "\n")
         return anime
     }

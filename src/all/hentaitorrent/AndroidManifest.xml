@@ -14,8 +14,12 @@
                 <category android:name="android.intent.category.BROWSABLE" />
 
                 <data
-                    android:host="nyaa.si"
-                    android:pathPattern="/view/..*"
+                    android:host="www.hentaitorrents.com"
+                    android:pathPattern="/.*html"
+                    android:scheme="https" />
+                <data
+                    android:host="hentaitorrents.com"
+                    android:pathPattern="/.*html"
                     android:scheme="https" />
             </intent-filter>
         </activity>
