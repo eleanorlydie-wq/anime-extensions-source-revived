@@ -3,7 +3,7 @@ ext {
     extClass = '.Animenosub'
     themePkg = 'animestream'
     baseUrl = 'https://animenosub.to'
-    overrideVersionCode = 21
+    overrideVersionCode = 22
     isNsfw = true
 }
 
@@ -12,6 +12,7 @@ apply plugin: "kei.plugins.extension.legacy"
 dependencies {
     implementation(project(':lib:streamwishextractor'))
     implementation(project(':lib:vidmolyextractor'))
+    implementation(project(':lib:vidaraextractor'))
     implementation(project(':lib:playlistutils'))
     implementation(project(":lib:unpacker"))
 }

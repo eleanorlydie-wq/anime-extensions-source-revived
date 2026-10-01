@@ -244,15 +244,15 @@ abstract class WcoTheme :
         val hd: String?,
         val fhd: String?,
     ) {
-        val videos by lazy {
-            listOfNotNull(
-                sd?.takeIf(String::isNotBlank)?.let { Pair("480p", it) },
-                hd?.takeIf(String::isNotBlank)?.let { Pair("720p", it) },
-                fhd?.takeIf(String::isNotBlank)?.let { Pair("1080p", it) },
-            ).map {
-                val videoUrl = "$server/getvid?evid=" + it.second
-                Video(videoUrl, it.first, videoUrl)
-            }
+        // The signed video link is bound to the User-Agent that requested it, so playback must
+        // reuse the same headers.
+        fun videos(playbackHeaders: Headers): List<Video> = listOfNotNull(
+            sd?.takeIf(String::isNotBlank)?.let { Pair("480p", it) },
+            hd?.takeIf(String::isNotBlank)?.let { Pair("720p", it) },
+            fhd?.takeIf(String::isNotBlank)?.let { Pair("1080p", it) },
+        ).map {
+            val videoUrl = "$server/getvid?evid=" + it.second
+            Video(videoUrl, it.first, videoUrl, playbackHeaders)
         }
     }
 
@@ -294,11 +294,14 @@ abstract class WcoTheme :
 
     open suspend fun iframeParse(iframeLink: String): List<Video> = if (iframeLink.contains("embed.wcostream")) {
         // Dub or Hard-sub
-        val iframeSoup = client.newCall(GET(iframeLink, headers))
+        // index.php is now an announcement interstitial that redirects to video-js.php
+        // (same query string) client-side, so request the player page directly.
+        val playerLink = iframeLink.replace("/embed/index.php", "/embed/video-js.php")
+        val iframeSoup = client.newCall(GET(playerLink, headers))
             .awaitSuccess().asJsoup()
 
-        val getVideoLinkScript =
-            iframeSoup.selectFirst("script:containsData(getJSON)")!!.data()
+        val getVideoLinkScript = iframeSoup.selectFirst("script:containsData(getJSON)")?.data()
+            ?: throw Exception("Video player not found")
         val getVideoLink =
             getVideoLinkScript.substringAfter("$.getJSON(\"").substringBefore("\"")
 
@@ -315,7 +318,7 @@ abstract class WcoTheme :
             .awaitSuccess()
             .parseAs<VideoResponseDto>()
 
-        videoData.videos
+        videoData.videos(headers)
     } else if (iframeLink.contains("vhs.watchanimesub")) {
         // Premium videos with high quality, soft-sub and audio tracks
         val body = client.newCall(GET(iframeLink, headers))

@@ -13,12 +13,15 @@ import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.util.asJsoup
 import keiyoushi.utils.getPreferencesLazy
+import keiyoushi.utils.parallelCatchingFlatMapBlocking
+import keiyoushi.utils.parseAs
 import okhttp3.FormBody
 import okhttp3.Headers
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
 import okhttp3.Response
+import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import java.text.SimpleDateFormat
@@ -43,90 +46,87 @@ class HentaiMama :
 
     // Popular Anime
 
-    override fun popularAnimeSelector(): String = "article.tvshows"
+    override fun popularAnimeSelector(): String = "article.series-card"
 
     override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/advance-search/page/$page/?submit=Submit&filter=weekly")
 
-    override fun popularAnimeFromElement(element: Element): SAnime {
-        val anime = SAnime.create()
-        anime.setUrlWithoutDomain(element.select("a").attr("href"))
-        anime.title = element.select("div.data h3 a").text()
-        anime.thumbnail_url = element.select("div.poster img").attr("data-src")
-        return anime
+    override fun popularAnimeFromElement(element: Element): SAnime = seriesCardToAnime(element)
+
+    override fun popularAnimeNextPageSelector(): String = NEXT_PAGE_SELECTOR
+
+    private fun seriesCardToAnime(element: Element): SAnime = SAnime.create().apply {
+        val link = element.selectFirst("a.sc-poster") ?: element.selectFirst("h3.sc-title a")!!
+        setUrlWithoutDomain(link.attr("href"))
+        title = element.selectFirst("h3.sc-title a")?.text().orEmpty()
+        thumbnail_url = element.selectFirst("a.sc-poster img")?.imgUrl()
     }
 
-    override fun popularAnimeNextPageSelector(): String = "div.pagination-wraper div.resppages a"
+    private fun Element.imgUrl(): String = attr("abs:data-src").ifEmpty { attr("abs:src") }
 
     // episodes
 
-    override fun episodeListParse(response: Response): List<SEpisode> = super.episodeListParse(response)
+    override fun episodeListParse(response: Response): List<SEpisode> = super.episodeListParse(response).sortedByDescending { it.episode_number }
 
-    override fun episodeListSelector() = "div.series div.items article"
+    override fun episodeListSelector() = "div#episodes a.dt-se-item"
 
-    override fun episodeFromElement(element: Element): SEpisode {
-        val episode = SEpisode.create()
-        val date = SimpleDateFormat("MMM. dd, yyyy", Locale.US).parse(element.select("div.data > span").text())
-        val epNumPattern = Regex("Episode (\\d+\\.?\\d*)")
-        val epNumMatch = epNumPattern.find(element.select("div.season_m a span.c").text())
+    private val dateFormat by lazy { SimpleDateFormat("MMM dd, yyyy", Locale.US) }
 
-        episode.setUrlWithoutDomain(element.select("div.season_m a").attr("href"))
-        episode.name = element.select("div.data h3").text()
-        episode.date_upload = runCatching { date?.time }.getOrNull() ?: 0L
-        episode.episode_number = runCatching { epNumMatch?.groups?.get(1)!!.value.toFloat() }.getOrNull() ?: 1F
-
-        return episode
+    override fun episodeFromElement(element: Element): SEpisode = SEpisode.create().apply {
+        setUrlWithoutDomain(element.attr("href"))
+        name = element.selectFirst("b.dt-se-title")?.text().orEmpty().ifEmpty { "Episode" }
+        episode_number = element.selectFirst("b.dt-se-num")?.text()
+            ?.let { EPISODE_NUMBER_REGEX.find(it)?.value?.toFloatOrNull() }
+            ?: 1F
+        date_upload = element.selectFirst("span.dt-se-date")?.text()
+            ?.let { runCatching { dateFormat.parse(it)?.time }.getOrNull() }
+            ?: 0L
     }
 
     // Video Extractor
 
     override fun videoListParse(response: Response): List<Video> {
         val document = response.asJsoup()
+        val postId = document.selectFirst("link[rel=shortlink]")?.attr("href")
+            ?.substringAfter("?p=", "")?.takeIf { it.isNotEmpty() }
+            ?: POST_ID_REGEX.find(document.body().className())?.groupValues?.get(1)
+            ?: return emptyList()
 
-        // POST body data
+        // One HTML <iframe> snippet per mirror, returned as a JSON array
         val body = FormBody.Builder()
             .add("action", "get_player_contents")
-            .add(
-                "a",
-                document.selectFirst("#post_report input:nth-child(5)")?.attr("value").toString(),
-            )
+            .add("a", postId)
             .build()
+        val playerHeaders = headersBuilder().set("Referer", "$baseUrl/").build()
 
-        // Call POST
-        val newHeaders = Headers.headersOf("referer", "$baseUrl/")
+        val embedUrls = client.newCall(POST("$baseUrl/wp-admin/admin-ajax.php", playerHeaders, body))
+            .execute().use { it.body.string() }
+            .parseAs<List<String>>()
+            .flatMap { snippet -> Jsoup.parseBodyFragment(snippet, baseUrl).select("iframe[src]").map { it.absUrl("src") } }
 
-        val listOfiFrame = client.newCall(
-            POST("$baseUrl/wp-admin/admin-ajax.php", newHeaders, body),
-        )
-            .execute().asJsoup()
-            .body().select("iframe").toString()
+        return embedUrls.parallelCatchingFlatMapBlocking { embedUrl -> videosFromEmbed(embedUrl) }
+    }
 
-        val regex = Regex("https?[\\S][^\"]+")
-        val allLinks = regex.findAll(listOfiFrame)
-        val urls = allLinks.map { it.value }.toList()
-
-        val videoRegex = Regex("(https:[^\"]+\\.mp4*)")
-
-        val videoList = mutableListOf<Video>()
-
-        for (url in urls) {
-            val req = client.newCall(GET(url)).execute().asJsoup()
-                .body().toString()
-
-            val videoLink = videoRegex.find(req)
-            val videoRes = when {
-                url.contains("newr2") -> "Beta"
-                url.contains("new1") -> "Mirror 1"
-                url.contains("new2") -> "Mirror 2"
-                url.contains("new3") -> "Mirror 3"
-                else -> ""
-            }
-
-            if (videoLink != null) {
-                videoList.add(Video(videoLink.value, videoRes, videoLink.value))
-            }
+    private fun videosFromEmbed(embedUrl: String): List<Video> {
+        val videoHeaders = headersBuilder().set("Referer", "$baseUrl/").build()
+        val html = client.newCall(GET(embedUrl, videoHeaders)).execute().use { it.body.string() }
+        val mirror = when {
+            "dt_embed=rtmp" in embedUrl -> "Mirror 1"
+            "newjav" in embedUrl -> "Mirror 2"
+            "dt_embed=hls-mp4" in embedUrl -> "MP4"
+            "dt_embed=hls" in embedUrl -> "HLS"
+            else -> "Mirror"
         }
 
-        return videoList
+        // JW Player setup: sources: [{"file":"https:\/\/...","label":"1080p","type":"mp4"}, ...]
+        val sources = SOURCES_BLOCK_REGEX.find(html)?.groupValues?.get(1) ?: return emptyList()
+        return sources.split('}').mapNotNull { item ->
+            val file = FILE_REGEX.find(item)?.groupValues?.get(1)?.replace("\\/", "/")
+                ?.takeIf { it.startsWith("http") }
+                ?: return@mapNotNull null
+            val label = LABEL_REGEX.find(item)?.groupValues?.get(1)
+            val quality = if (label.isNullOrEmpty()) mirror else "$mirror $label"
+            Video(file, quality, file, videoHeaders)
+        }.distinctBy { it.videoUrl }
     }
 
     override fun videoListSelector() = throw UnsupportedOperationException()
@@ -154,38 +154,16 @@ class HentaiMama :
     override fun videoUrlParse(document: Document) = throw UnsupportedOperationException()
 
     // Search
-    private var filterSearch = false
 
-    override fun searchAnimeFromElement(element: Element): SAnime {
-        val anime = SAnime.create()
-        if (filterSearch) {
-            // filter search
-            anime.setUrlWithoutDomain(element.select("a").attr("href"))
-            anime.title = element.select("div.data h3 a").text()
-            anime.thumbnail_url = element.select("div.poster img").attr("data-src")
-            return anime
-        } else {
-            // normal search
-            anime.setUrlWithoutDomain(element.select("div.details > div.title a").attr("href"))
-            anime.thumbnail_url = element.select("div.image div a img").attr("src")
-            anime.title = element.select("div.details > div.title a").text()
-            return anime
-        }
-    }
+    override fun searchAnimeFromElement(element: Element): SAnime = seriesCardToAnime(element)
 
-    override fun searchAnimeNextPageSelector(): String = if (filterSearch) {
-        "div.pagination-wraper div.resppages a" // filter search
-    } else {
-        "link[rel=next]" // normal search
-    }
+    override fun searchAnimeNextPageSelector(): String = NEXT_PAGE_SELECTOR
 
-    override fun searchAnimeSelector(): String = "article"
+    override fun searchAnimeSelector(): String = "article.series-card"
 
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request = if (query.isNotEmpty()) {
-        filterSearch = false
         GET("$baseUrl/page/$page/?s=${query.replace(Regex("[\\W]"), " ")}") // regular search
     } else {
-        filterSearch = true
         val urlBuilder = "$baseUrl/advance-search/page/$page/".toHttpUrl().newBuilder()
         addSearchParameters(urlBuilder, filters)
         GET(urlBuilder.build().toString(), headers) // filter search
@@ -193,22 +171,21 @@ class HentaiMama :
 
     // Details
 
-    override fun animeDetailsParse(document: Document): SAnime {
-        val anime = SAnime.create()
-        anime.thumbnail_url = document.selectFirst("div.sheader div.poster img")!!.attr("data-src")
-        anime.title = document.select("#info1 div:nth-child(2) span").text()
-        anime.genre = document.select("div.sheader  div.data  div.sgeneros a")
-            .joinToString(", ") { it.text() }
-        anime.description = document.select("#info1 div.wp-content p").text()
-        anime.author = document.select("#info1 div:nth-child(3) span div  div a")
-            .joinToString(", ") { it.text() }
-        anime.status = parseStatus(document.select("#info1 div:nth-child(6) span").text())
-        return anime
-    }
-
-    private fun parseStatus(statusString: String): Int = when (statusString) {
-        "Ongoing" -> SAnime.ONGOING
-        else -> SAnime.COMPLETED
+    override fun animeDetailsParse(document: Document): SAnime = SAnime.create().apply {
+        thumbnail_url = document.selectFirst("div.dsc-poster img")?.imgUrl()
+        title = document.selectFirst("h1.dsc-title")?.text().orEmpty()
+        genre = document.select("div.dsc-genres a").joinToString(", ") { it.text() }
+        description = document.select("div.dsc-desc p").joinToString("\n\n") { it.text() }
+            .ifEmpty { document.selectFirst("div.dsc-desc")?.text() }
+        author = document.select("div.dsc-stat")
+            .firstOrNull { it.selectFirst("span")?.text() == "Studio" }
+            ?.selectFirst("b")?.text()
+            ?.takeIf { it.any(Char::isLetterOrDigit) }
+        status = when {
+            document.selectFirst("span.dsc-chip.is-completed") != null -> SAnime.COMPLETED
+            document.select("span.dsc-chip").any { it.text().contains("Ongoing", ignoreCase = true) } -> SAnime.ONGOING
+            else -> SAnime.UNKNOWN
+        }
     }
 
     // Latest
@@ -217,15 +194,14 @@ class HentaiMama :
 
     override fun latestUpdatesRequest(page: Int): Request = GET("$baseUrl/tvshows/page/$page/")
 
-    override fun latestUpdatesFromElement(element: Element): SAnime {
-        val anime = SAnime.create()
-        anime.setUrlWithoutDomain(element.select("a").attr("href"))
-        anime.title = element.select("div.data h3 a").text()
-        anime.thumbnail_url = element.select("div.poster img").attr("data-src")
-        return anime
+    override fun latestUpdatesFromElement(element: Element): SAnime = SAnime.create().apply {
+        val link = element.selectFirst("div.data h3 a") ?: element.selectFirst("a[href]")!!
+        setUrlWithoutDomain(link.attr("href"))
+        title = link.text().ifEmpty { element.selectFirst("div.poster img")?.attr("alt").orEmpty() }
+        thumbnail_url = element.selectFirst("div.poster img")?.imgUrl()
     }
 
-    override fun latestUpdatesNextPageSelector(): String = "link[rel=next]"
+    override fun latestUpdatesNextPageSelector(): String = NEXT_PAGE_SELECTOR
 
     // Settings
 
@@ -388,6 +364,12 @@ class HentaiMama :
     companion object {
         private const val PREF_QUALITY_KEY = "preferred_quality"
         private const val PREF_QUALITY_TITLE = "Preferred video quality"
-        private val PREF_QUALITY_ENTRIES = arrayOf("Mirror 1", "Mirror 2", "Mirror 3", "Beta")
+        private const val NEXT_PAGE_SELECTOR = "a.dt-pg-next"
+        private val EPISODE_NUMBER_REGEX = Regex("""\d+(\.\d+)?""")
+        private val POST_ID_REGEX = Regex("""postid-(\d+)""")
+        private val SOURCES_BLOCK_REGEX = Regex("""sources:\s*\[(.*?)]""", RegexOption.DOT_MATCHES_ALL)
+        private val FILE_REGEX = Regex(""""?file"?\s*:\s*"([^"]+)"""")
+        private val LABEL_REGEX = Regex(""""?label"?\s*:\s*"([^"]*)"""")
+        private val PREF_QUALITY_ENTRIES = arrayOf("Mirror 1", "Mirror 2", "MP4", "HLS")
     }
 }

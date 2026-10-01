@@ -91,7 +91,7 @@ class Subsplease :
         val jsonData = jsonLine ?: return emptyList()
         val jObject = json.decodeFromString<JsonObject>(jsonData)
         val episodeList = mutableListOf<SEpisode>()
-        val epE = jObject["episode"]?.jsonObject?.entries
+        val epE = (jObject["episode"] as? JsonObject)?.entries
         epE?.forEach {
             val itJ = it.value.jsonObject
             val episode = SEpisode.create()
@@ -145,7 +145,7 @@ class Subsplease :
     private fun videosFromElement(jsonLine: String?, num: String): List<Video> {
         val jsonData = jsonLine ?: return emptyList()
         val jObject = json.decodeFromString<JsonObject>(jsonData)
-        val epE = jObject["episode"]?.jsonObject?.entries
+        val epE = (jObject["episode"] as? JsonObject)?.entries
         return epE?.mapNotNull {
             val itJ = it.value.jsonObject
             val epN = itJ["episode"]?.jsonPrimitive?.content

@@ -3,6 +3,7 @@ package eu.kanade.tachiyomi.animeextension.en.animenosub
 import android.content.SharedPreferences
 import androidx.preference.PreferenceScreen
 import aniyomi.lib.streamwishextractor.StreamWishExtractor
+import aniyomi.lib.vidaraextractor.VidaraExtractor
 import aniyomi.lib.vidmolyextractor.VidMolyExtractor
 import eu.kanade.tachiyomi.animeextension.en.animenosub.extractors.MoonExtractor
 import eu.kanade.tachiyomi.animeextension.en.animenosub.extractors.VtubeExtractor
@@ -41,6 +42,9 @@ class Animenosub :
                 "moonembed",
             ).any(url::contains) -> {
                 MoonExtractor(client, headers, baseUrl).videosFromUrl(url, prefix)
+            }
+            url.contains("vidara") -> {
+                VidaraExtractor(client, headers).videosFromUrl(url, prefix)
             }
             url.contains("vidmoly") -> {
                 VidMolyExtractor(client, headers).videosFromUrl(url, prefix.trim())
@@ -119,6 +123,7 @@ class Animenosub :
         private val PREF_SERVER_VALUES = listOf(
             "Moon",
             "StreamWish",
+            "Vidara",
             "VidMoly",
             "Vtube",
             "WolfStream",
