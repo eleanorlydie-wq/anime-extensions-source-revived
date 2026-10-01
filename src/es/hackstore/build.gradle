@@ -1,7 +1,7 @@
 ext {
     extName = 'Hackstore'
     extClass = '.Hackstore'
-    extVersionCode = 41
+    extVersionCode = 42
 }
 
 apply plugin: "kei.plugins.extension.legacy"
@@ -15,4 +15,6 @@ dependencies {
     implementation(project(':lib:vidhideextractor'))
     implementation(project(':lib:goodstreamextractor'))
     implementation(project(':lib:universalextractor'))
+    implementation(project(':lib:playlistutils'))
+    implementation(project(':lib:unpacker'))
 }

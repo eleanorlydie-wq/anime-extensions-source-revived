@@ -7,6 +7,7 @@ import aniyomi.lib.doodextractor.DoodExtractor
 import aniyomi.lib.filemoonextractor.FilemoonExtractor
 import aniyomi.lib.gdriveplayerextractor.GdrivePlayerExtractor
 import aniyomi.lib.okruextractor.OkruExtractor
+import aniyomi.lib.sendvidextractor.SendvidExtractor
 import aniyomi.lib.sibnetextractor.SibnetExtractor
 import aniyomi.lib.streamlareextractor.StreamlareExtractor
 import aniyomi.lib.streamtapeextractor.StreamTapeExtractor
@@ -185,6 +186,7 @@ class Animeler :
     private val filemoonExtractor by lazy { FilemoonExtractor(client) }
     private val gdrivePlayerExtractor by lazy { GdrivePlayerExtractor(client) }
     private val okruExtractor by lazy { OkruExtractor(client) }
+    private val sendvidExtractor by lazy { SendvidExtractor(client, headers) }
     private val sibnetExtractor by lazy { SibnetExtractor(client) }
     private val streamlareExtractor by lazy { StreamlareExtractor(client) }
     private val streamtapeExtractor by lazy { StreamTapeExtractor(client) }
@@ -219,7 +221,7 @@ class Animeler :
             val ajaxHeaders = headers.newBuilder()
                 .add("X-Requested-With", "XMLHttpRequest")
                 .add("Accept", "application/json")
-                .add("Referer", refererUrl)
+                .set("Referer", refererUrl)
                 .build()
 
             val result = client.newCall(POST("$baseUrl/ajax/get-source-url", ajaxHeaders, body))
@@ -230,7 +232,7 @@ class Animeler :
             if (!result.success || embedUrl.isNullOrBlank()) {
                 emptyList()
             } else {
-                val embedDoc = client.newCall(GET(embedUrl, headers)).awaitSuccess().asJsoup()
+                val embedDoc = client.newCall(GET(embedUrl, ajaxHeaders)).awaitSuccess().asJsoup()
                 val playerUrl = embedDoc.selectFirst("iframe#innerPlayer")?.attr("src")
                 if (playerUrl.isNullOrBlank()) emptyList() else videosFromUrl(playerUrl)
             }
@@ -250,6 +252,8 @@ class Animeler :
         "ok.ru" in url || "odnoklassniki.ru" in url -> okruExtractor.videosFromUrl(url)
 
         "streamtape" in url -> streamtapeExtractor.videoFromUrl(url)?.let(::listOf)
+
+        "sendvid." in url -> sendvidExtractor.videosFromUrl(url)
 
         "sibnet" in url -> sibnetExtractor.videosFromUrl(url)
 
@@ -327,6 +331,7 @@ class Animeler :
             "Moon",
             "ok.ru",
             "S.Tape",
+            "Sendvid",
             "Sibnet",
             "Streamlare",
             "UQload",

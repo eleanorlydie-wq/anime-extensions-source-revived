@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.animeextension.pt.muitohentai
 
+import aniyomi.lib.bloggerextractor.BloggerExtractor
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
@@ -7,6 +8,8 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.ParsedAnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.util.asJsoup
+import kotlinx.coroutines.runBlocking
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Response
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
@@ -92,22 +95,41 @@ class MuitoHentai : ParsedAnimeHttpSource() {
     }
 
     // ============================ Video Links =============================
-    override fun videoListSelector() = "div.playex > div#option-0 > iframe"
+    override fun videoListSelector() = "div.playex iframe"
+
+    private val bloggerExtractor by lazy { BloggerExtractor(client) }
 
     override fun videoListParse(response: Response): List<Video> {
         val doc = response.asJsoup()
-        val idplay = doc.selectFirst(videoListSelector())!!.attr("src").substringAfter("?idplay=")
-        val res = client.newCall(GET("https://www.hentaitube.online/players_sites/mt/index.php?idplay=$idplay")).execute()
-        val pdoc = res.asJsoup()
-        return pdoc
-            .select("source")
-            .map(::videoFromElement)
+        return doc.select(videoListSelector()).mapNotNull { it.attr("abs:src").ifBlank { null } }.distinct().flatMap { frame ->
+            runCatching {
+                when {
+                    "/players/p2/" in frame -> p2Videos(frame)
+                    else -> hdVideos(frame)
+                }
+            }.getOrDefault(emptyList())
+        }
     }
 
-    override fun videoFromElement(element: Element): Video {
-        val url = element.attr("src")
-        return Video(url, element.attr("label"), url)
+    // hd.php wraps a blogger video
+    private fun hdVideos(url: String): List<Video> {
+        val body = client.newCall(GET(url, headers)).execute().use { it.body.string() }
+        val blogger = Regex("""src=["'](https://www\.blogger\.com/video\.g[^"']+)""").find(body)?.groupValues?.get(1)
+            ?: return emptyList()
+        return runBlocking { bloggerExtractor.videosFromUrl(blogger, headers, " - HD") }
     }
+
+    // p2 player points at a php endpoint that redirects to the mp4
+    private fun p2Videos(url: String): List<Video> {
+        val body = client.newCall(GET(url, headers)).execute().use { it.body.string() }
+        val php = Regex("""<source src=["']([^"']+)""").find(body)?.groupValues?.get(1) ?: return emptyList()
+        val noRedirect = client.newBuilder().followRedirects(false).build()
+        val location = noRedirect.newCall(GET(php, headers)).execute().use { it.header("Location") } ?: php
+        val videoUrl = location.toHttpUrlOrNull()?.toString() ?: return emptyList()
+        return listOf(Video(videoUrl, "SD", videoUrl, headers))
+    }
+
+    override fun videoFromElement(element: Element) = throw UnsupportedOperationException()
 
     override fun videoUrlParse(document: Document) = throw UnsupportedOperationException()
 

@@ -3,6 +3,7 @@ package eu.kanade.tachiyomi.animeextension.es.locopelis
 import androidx.preference.ListPreference
 import androidx.preference.PreferenceScreen
 import aniyomi.lib.doodextractor.DoodExtractor
+import aniyomi.lib.filemoonextractor.FilemoonExtractor
 import aniyomi.lib.okruextractor.OkruExtractor
 import aniyomi.lib.streamtapeextractor.StreamTapeExtractor
 import aniyomi.lib.vidhideextractor.VidHideExtractor
@@ -14,9 +15,13 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.ParsedAnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
+import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.util.asJsoup
 import keiyoushi.utils.getPreferencesLazy
 import keiyoushi.utils.parallelCatchingFlatMapBlocking
+import keiyoushi.utils.parseAs
+import kotlinx.serialization.Serializable
+import okhttp3.FormBody
 import okhttp3.Request
 import okhttp3.Response
 import org.jsoup.nodes.Document
@@ -44,7 +49,9 @@ class LocoPelis :
 
         private const val PREF_SERVER_KEY = "preferred_server"
         private const val PREF_SERVER_DEFAULT = "DoodStream"
-        private val SERVER_LIST = arrayOf("Okru", "DoodStream", "StreamTape", "StreamHideVid")
+        private val SERVER_LIST = arrayOf("Okru", "DoodStream", "StreamTape", "StreamHideVid", "Filemoon")
+
+        private const val PLAYER_PATH = "/player/index.php?h="
 
         private val DATE_FORMATTER by lazy {
             SimpleDateFormat("yyyy-MM-dd")
@@ -64,9 +71,13 @@ class LocoPelis :
 
     override fun popularAnimeNextPageSelector(): String = "#cn div ul.nav li ~ li"
 
+    private fun Document.playerFrames() = select(".tab_container .tab_content iframe").filter { it.playerSrc().isNotBlank() }
+
+    private fun Element.playerSrc() = attr("data-src").ifBlank { attr("src") }.takeUnless { it.startsWith("about:") }.orEmpty()
+
     override fun episodeListParse(response: Response): List<SEpisode> {
         val document = response.asJsoup()
-        return document.select(".tab_container .tab_content iframe").map {
+        return document.playerFrames().take(1).map {
             SEpisode.create().apply {
                 setUrlWithoutDomain(response.request.url.toString())
                 name = "PELÍCULA"
@@ -84,21 +95,52 @@ class LocoPelis :
 
     override fun episodeFromElement(element: Element) = throw UnsupportedOperationException()
 
+    @Serializable
+    private class PlayerDto(
+        val url: String? = null,
+        val status: Int = 0,
+        val options: List<OptionDto>? = null,
+    )
+
+    @Serializable
+    private class OptionDto(val name: String = "", val url: String = "")
+
+    // The embedded players are click-to-play stubs; the real host comes from player/api.php
+    private fun resolvePlayer(url: String): List<String> {
+        val h = url.substringAfter("h=", "").substringBefore("&")
+        if (PLAYER_PATH !in url || h.isBlank()) return listOf(url)
+        val body = FormBody.Builder().add("h", h).build()
+        val refHeaders = headersBuilder().set("Referer", "$url&ver=si").set("X-Requested-With", "XMLHttpRequest").build()
+        repeat(3) {
+            val dto = client.newCall(POST("$baseUrl/player/api.php", refHeaders, body)).execute().use { it.parseAs<PlayerDto>() }
+            if (dto.status == 2) {
+                Thread.sleep(1500)
+                return@repeat
+            }
+            val urls = (listOfNotNull(dto.url) + dto.options.orEmpty().map { it.url }).filter { it.startsWith("http") }
+            return urls.distinct()
+        }
+        return emptyList()
+    }
+
     override fun videoListParse(response: Response): List<Video> {
         val document = response.asJsoup()
-        return document.select(".tab_container .tab_content iframe").parallelCatchingFlatMapBlocking { iframe ->
-            with(iframe.attr("src")) {
+        return document.playerFrames().flatMap { resolvePlayer(it.playerSrc()) }.distinct().parallelCatchingFlatMapBlocking { link ->
+            with(link) {
                 when {
                     contains("streamtape") || contains("stp") || contains("stape")
                     -> StreamTapeExtractor(client).videosFromUrl(this, quality = "StreamTape")
 
-                    contains("doodstream") || contains("dood.") || contains("d000d") || contains("ds2play") || contains("doods.")
+                    contains("doodstream") || contains("dood.") || contains("d000d") || contains("ds2play") || contains("doods.") || contains("playmogo") || contains("myvidplay")
                     -> DoodExtractor(client).videosFromUrl(this, "DoodStream")
 
                     contains("ok.ru") || contains("okru") -> OkruExtractor(client).videosFromUrl(this)
 
                     contains("vidhide") || contains("streamhide") || contains("guccihide") || contains("streamvid")
                     -> VidHideExtractor(client, headers).videosFromUrl(this)
+
+                    contains("byse") || contains("filemoon") || contains("moonplayer")
+                    -> FilemoonExtractor(client).videosFromUrl(this, "Filemoon - ")
 
                     else -> emptyList()
                 }

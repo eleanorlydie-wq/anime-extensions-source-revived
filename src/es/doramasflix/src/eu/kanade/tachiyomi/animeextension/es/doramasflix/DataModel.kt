@@ -191,3 +191,10 @@ data class PagePropsToken(
 data class QueryToken(
     val token: String? = null,
 )
+
+@Serializable
+data class RscLink(
+    val server: String? = null,
+    val lang: String? = null,
+    val link: String? = null,
+)

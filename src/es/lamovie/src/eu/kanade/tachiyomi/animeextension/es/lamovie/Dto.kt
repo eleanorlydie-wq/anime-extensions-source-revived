@@ -1,76 +1,71 @@
 package eu.kanade.tachiyomi.animeextension.es.lamovie
 
-import eu.kanade.tachiyomi.animeextension.es.lamovie.LaMovie.Companion.DEFAULT_LISTING_TYPE
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.JsonElement
-
-data class AnimeContext(
-    val type: String,
-    val slug: String,
-    val id: Long?,
-)
-
-data class EpisodeContext(val postId: Long)
 
 @Serializable
-data class ListingDataDto(
-    val posts: List<PostDto> = emptyList(),
+class ListingDto(
+    val items: List<ItemDto> = emptyList(),
     val pagination: PaginationDto? = null,
+    val total: Int? = null,
 )
 
 @Serializable
-data class PaginationDto(
-    @SerialName("current_page") val currentPage: Int? = null,
-    @SerialName("last_page") val lastPage: Int? = null,
+class PaginationDto(
+    @SerialName("has_next") val hasNext: Boolean = false,
 )
 
 @Serializable
-data class PostDto(
-    @SerialName("_id") val id: Long,
+class ItemResponseDto(val item: ItemDto)
+
+@Serializable
+class GenreDto(val title: String = "")
+
+@Serializable
+class ItemDto(
+    @SerialName("tmdb_id") val tmdbId: Long,
+    val kind: String,
     val title: String = "",
+    @SerialName("poster_path") val posterPath: String? = null,
     val overview: String? = null,
-    val slug: String = "",
-    val images: ImagesDto? = null,
-    val type: String? = null,
+    val status: String? = null,
+    val genres: List<GenreDto> = emptyList(),
     @SerialName("original_title") val originalTitle: String? = null,
-    val gallery: String? = null,
-) {
-    val postType: String
-        get() = type?.takeIf { it.isNotBlank() } ?: DEFAULT_LISTING_TYPE
-}
-
-@Serializable
-data class ImagesDto(
-    val poster: String? = null,
-    val backdrop: String? = null,
 )
 
 @Serializable
-data class EpisodeDto(
-    @SerialName("_id") val id: Long,
-    val name: String? = null,
+class SeasonsDto(val seasons: List<SeasonDto> = emptyList())
+
+@Serializable
+class SeasonDto(
+    val season: Int,
+    @SerialName("available_count") val availableCount: Int = 0,
+    @SerialName("playable_count") val playableCount: Int = 0,
+)
+
+@Serializable
+class SeasonDetailDto(val season: SeasonEpisodesDto)
+
+@Serializable
+class SeasonEpisodesDto(val episodes: List<EpisodeDto> = emptyList())
+
+@Serializable
+class EpisodeDto(
+    val season: Int,
+    val episode: Int,
     val title: String? = null,
-    @SerialName("season_number") val seasonNumber: Int? = null,
-    @SerialName("episode_number") val episodeNumber: Int? = null,
-    val date: String? = null,
+    @SerialName("air_date") val airDate: String? = null,
+    val playable: Boolean = false,
 )
 
 @Serializable
-data class EpisodesListDto(
-    val posts: List<EpisodeDto> = emptyList(),
-    val pagination: PaginationDto? = null,
-    val seasons: List<Int>? = null,
-)
+class PlaybackDto(val embeds: List<EmbedDto> = emptyList())
 
 @Serializable
-data class PlayerDataDto(
-    val embeds: JsonElement? = null,
-)
-
-data class EmbedItem(
-    val server: String,
+class EmbedDto(
     val url: String,
+    val server: String? = null,
+    val host: String? = null,
+    val lang: String? = null,
     val quality: String? = null,
-    val language: String? = null,
 )
