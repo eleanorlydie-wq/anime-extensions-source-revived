@@ -17,7 +17,7 @@ import okhttp3.Response
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import java.text.SimpleDateFormat
-import java.util.Date
+import java.util.Calendar
 import java.util.Locale
 
 class Xnxx :
@@ -37,9 +37,11 @@ class Xnxx :
     override fun popularAnimeSelector(): String = "div.thumb-block.video"
 
     override fun popularAnimeRequest(page: Int): Request {
-        val sdf = SimpleDateFormat("yyyy-MM", Locale.getDefault())
-        val currentDate = sdf.format(Date())
-        return GET("$baseUrl/best/$currentDate/${page - 1}")
+        // The current month's "best of" page 500s until the site has enough data for it
+        // (e.g. on the first days of a month), so always use the last full month.
+        val sdf = SimpleDateFormat("yyyy-MM", Locale.US)
+        val lastMonth = sdf.format(Calendar.getInstance().apply { add(Calendar.MONTH, -1) }.time)
+        return GET("$baseUrl/best/$lastMonth/${page - 1}")
     }
 
     override fun popularAnimeFromElement(element: Element): SAnime {
@@ -69,16 +71,30 @@ class Xnxx :
 
     override fun videoListParse(response: Response): List<Video> {
         val document = response.asJsoup()
-        val sourcesJson = document.select("script:containsData(html5player.setVideoUrl)").toString()
-        val lowQuality = sourcesJson.substringAfter("VideoUrlLow('").substringBefore("')")
-        val hlsQuality = sourcesJson.substringAfter("setVideoHLS('").substringBefore("')")
-        val highQuality = sourcesJson.substringAfter("VideoUrlHigh('").substringBefore("')")
-        return listOf(
-            Video(lowQuality, "Low", lowQuality),
-            Video(hlsQuality, "HLS", hlsQuality),
-            Video(highQuality, "High", highQuality),
-        )
+        val script = document.select("script:containsData(html5player.setVideo)").joinToString("\n") { it.data() }
+
+        val videos = listOfNotNull(
+            "Low" to script.playerUrl("setVideoUrlLow"),
+            "HLS" to script.playerUrl("setVideoHLS"),
+            "High" to script.playerUrl("setVideoUrlHigh"),
+        ).mapNotNull { (quality, url) -> url?.let { Video(it, quality, it) } }
+
+        if (videos.isNotEmpty()) return videos
+
+        // The player script no longer carries the stream urls; the page still links the SD file
+        // in its no-JS fallback and in its JSON-LD.
+        val fallback = document.select("#html5video_base a[href*=.mp4]").map { it.attr("abs:href") }
+            .plus(document.select("script[type=application/ld+json]").mapNotNull { contentUrlRegex.find(it.data())?.groupValues?.get(1) })
+            .filter(String::isNotBlank)
+            .distinct()
+
+        return fallback.map { Video(it, "SD", it) }
+            .ifEmpty { throw Exception("No videos found") }
     }
+
+    private val contentUrlRegex = Regex(""""contentUrl"\s*:\s*"([^"]+)"""")
+
+    private fun String.playerUrl(setter: String): String? = Regex("""html5player\.$setter\('([^']+)'\)""").find(this)?.groupValues?.get(1)
 
     override fun videoListSelector() = throw Exception("not used")
 
