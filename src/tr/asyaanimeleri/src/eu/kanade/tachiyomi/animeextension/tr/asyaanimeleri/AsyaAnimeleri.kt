@@ -3,6 +3,8 @@ package eu.kanade.tachiyomi.animeextension.tr.asyaanimeleri
 import aniyomi.lib.doodextractor.DoodExtractor
 import aniyomi.lib.gdriveplayerextractor.GdrivePlayerExtractor
 import aniyomi.lib.okruextractor.OkruExtractor
+import aniyomi.lib.rpmextractor.RpmExtractor
+import aniyomi.lib.rumbleextractor.RumbleExtractor
 import aniyomi.lib.sibnetextractor.SibnetExtractor
 import aniyomi.lib.vkextractor.VkExtractor
 import eu.kanade.tachiyomi.animeextension.tr.asyaanimeleri.AsyaAnimeleriFilters.CountryFilter
@@ -103,6 +105,8 @@ class AsyaAnimeleri :
     private val sibnetExtractor by lazy { SibnetExtractor(client) }
     private val gdrivePlayerExtractor by lazy { GdrivePlayerExtractor(client) }
     private val doodExtractor by lazy { DoodExtractor(client) }
+    private val rpmExtractor by lazy { RpmExtractor(client, headers) }
+    private val rumbleExtractor by lazy { RumbleExtractor(client, headers) }
 
     override suspend fun getVideoList(url: String, name: String): List<Video> = when (name.lowercase().trim()) {
         "vk" -> vkExtractor.videosFromUrl(url)
@@ -112,6 +116,10 @@ class AsyaAnimeleri :
         "sibnet" -> sibnetExtractor.videosFromUrl(url)
 
         "dood", "doodstream" -> doodExtractor.videoFromUrl(url)?.let(::listOf) ?: emptyList()
+
+        "vp" -> rpmExtractor.videosFromUrl(url, siteHost = baseUrl.toHttpUrl().host, prefix = "VP:")
+
+        "rumble" -> rumbleExtractor.videosFromUrl(url, prefix = "Rumble:")
 
         "gdrive" -> {
             val newUrl = "https://gdriveplayer.to/embed2.php?link=$url"

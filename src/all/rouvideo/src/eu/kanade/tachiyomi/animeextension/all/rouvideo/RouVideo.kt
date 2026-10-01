@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.animeextension.all.rouvideo
 
-import aniyomi.lib.playlistutils.PlaylistUtils
+import aniyomi.lib.m3u8server.M3u8ServerManager
+import aniyomi.lib.m3u8server.PngContainer
 import eu.kanade.tachiyomi.animeextension.all.rouvideo.RouVideoDto.toAnimePage
 import eu.kanade.tachiyomi.animeextension.all.rouvideo.RouVideoFilter.ALL_VIDEOS
 import eu.kanade.tachiyomi.animeextension.all.rouvideo.RouVideoFilter.FEATURED
@@ -24,12 +25,19 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Request
 import okhttp3.Response
 import org.jsoup.nodes.Document
 import uy.kohesive.injekt.injectLazy
+import java.net.URLDecoder
 import java.util.Locale
 
 class RouVideo(
@@ -68,15 +76,14 @@ class RouVideo(
         add("Host", videoUrl.toHttpUrl().host)
     }.build()
 
-    private val videoHeaders by lazy {
+    // No Host header here: the playlist request is redirected to the CDN
+    private val playlistHeaders by lazy {
         headers.newBuilder().apply {
-            add("Accept", "video/webm,video/ogg,video/*;q=0.9,application/ogg;q=0.7,audio/*;q=0.6,*/*;q=0.5")
-            add("Host", apiUrl.toHttpUrl().host)
             add("Referer", "$videoUrl/")
         }.build()
     }
 
-    private val playlistUtils by lazy { PlaylistUtils(client) }
+    private val m3u8Server by lazy { M3u8ServerManager(client) }
 
     // ============================== Popular ===============================
 
@@ -96,12 +103,33 @@ class RouVideo(
 
     override fun popularAnimeParse(response: Response): AnimesPage {
         val document = response.asJsoup()
-        val data = document.selectFirst("script#__NEXT_DATA__")?.data()
-            ?: return AnimesPage(emptyList(), false)
 
-        return json.decodeFromString<RouVideoDto.VideoList>(data)
-            .props.pageProps.toAnimePage()
+        return AnimesPage(
+            document.parseCards(),
+            document.selectFirst("nav a[rel=next]") != null,
+        )
     }
+
+    /**
+     * The site is server-rendered now (no more `__NEXT_DATA__`), so listings are scraped from the
+     * video cards: `<a href="/v/{id}"><img/><img alt="{title}"/><span>720P</span>...<h3>{title}</h3>`.
+     */
+    private fun Document.parseCards(): List<SAnime> = select("a[href^=/v/]").mapNotNull { card ->
+        val id = card.attr("href").removePrefix("/v/").substringBefore('?').substringBefore('/')
+            .takeIf(String::isNotEmpty) ?: return@mapNotNull null
+        val title = card.selectFirst("h3")?.text()?.takeIf(String::isNotBlank)
+            ?: card.selectFirst("img:not([alt=\"\"])")?.attr("alt")?.takeIf(String::isNotBlank)
+            ?: return@mapNotNull null
+        val resolution = card.select("span").firstNotNullOfOrNull { CARD_RESOLUTION_REGEX.matchEntire(it.text().trim()) }
+            ?.groupValues?.get(1)
+
+        SAnime.create().apply {
+            url = id
+            this.title = title
+            thumbnail_url = card.select("img").lastOrNull()?.attr("abs:src")
+            resolution?.let { description = resolutionDesc(it) }
+        }
+    }.distinctBy { it.url }
 
     override suspend fun fetchRelatedAnimeList(anime: SAnime): List<SAnime> = coroutineScope {
         listOf(
@@ -126,12 +154,9 @@ class RouVideo(
     }
 
     override fun relatedAnimeListParse(response: Response): List<SAnime> {
-        val document = response.asJsoup()
-        val data = document.selectFirst("script#__NEXT_DATA__")?.data()
-            ?: return emptyList()
+        val currentId = response.request.url.pathSegments.lastOrNull()
 
-        return json.decodeFromString<RouVideoDto.VideoDetails>(data)
-            .props.pageProps.relatedVideos.map { video -> video.toSAnime() }
+        return response.asJsoup().parseCards().filterNot { it.url == currentId }
     }
 
     // =============================== Latest ===============================
@@ -207,7 +232,7 @@ class RouVideo(
 
                 FEATURED, null, "" -> { // "Featured", "No category", or "All Categories" -> Show featured content
                     handleSearchAnime(featuredURL, docHeaders) {
-                        asJsoup().parseFeaturedPage(sortFilter)
+                        asJsoup().parseFeaturedPage()
                     }
                 }
 
@@ -234,12 +259,8 @@ class RouVideo(
         }
     }
 
-    private fun Document.parseFeaturedPage(sortFilter: RouVideoFilter.SortFilter?): AnimesPage = this.selectFirst("script#__NEXT_DATA__")?.data()
-        ?.let {
-            json.decodeFromString<RouVideoDto.HotVideoList>(it)
-                .props.pageProps.toAnimePage(sortFilter?.toUriPart())
-        }
-        ?: AnimesPage(emptyList(), false)
+    // The home page has no sortable metadata anymore, so the sort filter doesn't apply to it.
+    private fun Document.parseFeaturedPage(): AnimesPage = AnimesPage(parseCards(), false)
 
     private fun buildBrowseUrl(
         page: Int,
@@ -350,12 +371,13 @@ class RouVideo(
     /**
      * Get the genres from the document.
      */
-    private fun tagsListParse(document: Document): Tags = document.selectFirst("script#__NEXT_DATA__")?.data()
-        ?.let {
-            json.decodeFromString<RouVideoDto.TagList>(it)
-                .props.pageProps.toTagList()
-        }
-        ?: emptyArray<Tag>()
+    private fun tagsListParse(document: Document): Tags = document.select("a[href^=/t/]")
+        .map { it.attr("href").removePrefix("/t/").substringBefore('?') }
+        .filter(String::isNotEmpty)
+        .distinct()
+        .map { URLDecoder.decode(it, "UTF-8") }
+        .map { Tag(it, it) }
+        .toTypedArray()
 
     private var savedTags: Set<Tag> = loadTagListFromPreferences()
         set(value) {
@@ -391,13 +413,10 @@ class RouVideo(
         }.onFailure { it.printStackTrace() }
     }
 
-    private fun hotSearchParse(document: Document): Set<String> = document.selectFirst("script#__NEXT_DATA__")?.data()
-        ?.let {
-            val hotSearches = json.decodeFromString<RouVideoDto.VideoList>(it)
-                .props.pageProps.hotSearches
-            hotSearches?.toSet()
-        }
-        ?: emptySet()
+    private fun hotSearchParse(document: Document): Set<String> = document.select("a[href^=/search?q=]")
+        .mapNotNull { "$videoUrl${it.attr("href")}".toHttpUrlOrNull()?.queryParameter("q") }
+        .filter(String::isNotBlank)
+        .toSet()
 
     // =========================== Anime Details ============================
 
@@ -420,19 +439,85 @@ class RouVideo(
 
     private fun parseAnimeDetails(response: Response, resolution: String? = null): SAnime {
         val document = response.asJsoup()
-        val data = document.selectFirst("script#__NEXT_DATA__")?.data() ?: return SAnime.create()
-        val video = json.decodeFromString<RouVideoDto.VideoDetails>(data).props.pageProps.video
+        val page = document.parseVideoPage() ?: return SAnime.create()
 
-        savedTags = savedTags.plus(video.getTagList())
+        savedTags = savedTags.plus(page.tags.map { Tag(it, it) })
 
-        return video.toSAnime()
-            .apply {
-                // Search & RelatedVideos doesn't have likeCount while AnimeDetails doesn't have resolution
-                val resolutionSet = description?.matches(resolutionRegex) ?: false
-                if (!resolutionSet && !resolution.isNullOrBlank()) {
-                    description = "${resolutionDesc(resolution)}\n$description"
-                }
+        return SAnime.create().apply {
+            url = page.id
+            title = page.name
+            thumbnail_url = page.cover
+            artist = page.tags.firstOrNull()
+            author = page.tags.firstOrNull()
+            genre = (listOfNotNull(page.code) + page.tags).joinToString()
+            status = SAnime.COMPLETED
+            description = buildString {
+                resolution?.takeIf(String::isNotBlank)?.let { append("${resolutionDesc(it)}\n") }
+                page.duration?.let { append("Duration: ${RouVideoDto.formatDuration(it)}\n") }
+                append("View: ${page.viewCount}")
+                page.likeCount?.let { append(" - Like: $it") }
+                page.ref?.let { append("\nRef: $it") }
+                page.description?.let { append("\n\n$it") }
             }
+            initialized = true
+        }
+    }
+
+    private class VideoPage(
+        val id: String,
+        val code: String?,
+        val name: String,
+        val description: String?,
+        val ref: String?,
+        val tags: List<String>,
+        val cover: String?,
+        val uploadDate: String?,
+        val duration: Int?,
+        val viewCount: Int,
+        val likeCount: Int?,
+    )
+
+    /**
+     * Detail pages are server-rendered: the JSON-LD `VideoObject` carries the title, cover, tags,
+     * duration and views, while the inline hydration script still has the catalogue code (`vid`),
+     * the `ref` link and the like count.
+     */
+    private fun Document.parseVideoPage(): VideoPage? {
+        val ld = select("script[type=application/ld+json]").firstNotNullOfOrNull { script ->
+            runCatching { json.parseToJsonElement(script.data()).jsonObject }.getOrNull()
+                ?.takeIf { it["@type"]?.jsonPrimitive?.contentOrNull == "VideoObject" }
+        } ?: return null
+
+        val id = ld["url"]?.jsonPrimitive?.contentOrNull?.substringAfterLast('/')?.takeIf(String::isNotEmpty)
+            ?: return null
+
+        // Only the part describing the current video, before the related videos list
+        val state = select("script").map { it.data() }.firstOrNull { "relatedVideos" in it }
+            ?.substringBefore("relatedVideos")
+            .orEmpty()
+
+        return VideoPage(
+            id = id,
+            code = VIDEO_CODE_REGEX.find(state)?.groupValues?.get(1)?.takeIf(String::isNotBlank),
+            name = ld["name"]?.jsonPrimitive?.contentOrNull ?: return null,
+            description = ld["description"]?.jsonPrimitive?.contentOrNull
+                ?.takeIf { it != ld["name"]?.jsonPrimitive?.contentOrNull },
+            ref = VIDEO_REF_REGEX.find(state)?.groupValues?.get(1)?.takeIf(String::isNotBlank),
+            tags = (ld["genre"] as? JsonArray)?.mapNotNull { it.jsonPrimitive.contentOrNull }.orEmpty(),
+            cover = (ld["thumbnailUrl"] as? JsonArray)?.firstOrNull()?.jsonPrimitive?.contentOrNull
+                ?: ld["thumbnailUrl"]?.jsonPrimitive?.contentOrNull,
+            uploadDate = ld["uploadDate"]?.jsonPrimitive?.contentOrNull,
+            duration = ld["duration"]?.jsonPrimitive?.contentOrNull?.let(::parseIsoDuration),
+            viewCount = ld["interactionStatistic"]?.jsonObject?.get("userInteractionCount")
+                ?.jsonPrimitive?.intOrNull ?: 0,
+            likeCount = VIDEO_LIKE_REGEX.find(state)?.groupValues?.get(1)?.toIntOrNull(),
+        )
+    }
+
+    private fun parseIsoDuration(value: String): Int? {
+        val match = ISO_DURATION_REGEX.matchEntire(value) ?: return null
+        val (h, m, s) = match.destructured
+        return (h.toIntOrNull() ?: 0) * 3600 + (m.toIntOrNull() ?: 0) * 60 + (s.toDoubleOrNull()?.toInt() ?: 0)
     }
 
     // ============================== Episodes ==============================
@@ -440,33 +525,66 @@ class RouVideo(
     override fun episodeListRequest(anime: SAnime): Request = GET("$videoUrl/$VIDEO_SLUG/${anime.url}", docHeaders)
 
     override fun episodeListParse(response: Response): List<SEpisode> {
-        val document = response.asJsoup()
-        val data = document.selectFirst("script#__NEXT_DATA__")?.data() ?: return emptyList()
-        val video = json.decodeFromString<RouVideoDto.VideoDetails>(data).props.pageProps.video
+        val page = response.asJsoup().parseVideoPage() ?: return emptyList()
 
-        return listOf(video.toEpisode())
+        return listOf(
+            SEpisode.create().apply {
+                name = page.id
+                url = page.id
+                date_upload = page.uploadDate?.let(RouVideoDto::parseDate) ?: 0L
+                episode_number = 1f
+            },
+        )
     }
 
     override fun getEpisodeUrl(episode: SEpisode) = "$videoUrl/$VIDEO_SLUG/${episode.url}"
 
     // ============================ Video Links =============================
 
-    // The HLS link now lives in the detail page's __NEXT_DATA__, not the (now empty) /api endpoint.
+    // The HLS link lives in the detail page's inline hydration state (`ev`), not in the /api endpoint.
     override fun videoListRequest(episode: SEpisode) = GET("$videoUrl/$VIDEO_SLUG/${episode.url}", docHeaders)
 
     override fun videoListParse(response: Response): List<Video> {
-        val nextData = response.asJsoup().selectFirst("script#__NEXT_DATA__")?.data()
+        val state = response.asJsoup().select("script").map { it.data() }.firstOrNull { "ev:" in it }
             ?: throw Exception("Failed to load video data")
 
-        val ev = json.decodeFromString<RouVideoDto.PlayPage>(nextData).props.pageProps.ev
+        val ev = EV_REGEX.find(state)?.destructured
+            ?.let { (d, k) -> RouVideoDto.Ev(d, k.toInt()) }
             ?: throw Exception("No available videos")
 
         val playInfo = json.decodeFromString<RouVideoDto.PlayInfo>(ev.decodeToJson())
+        val playlistUrl = videoUrl.toHttpUrl().resolve(playInfo.videoUrl)?.toString()
+            ?: throw Exception("Invalid video url")
 
-        return playlistUtils.extractFromHls(
-            playlistUrl = playInfo.videoUrl,
-            referer = "$videoUrl/",
-        )
+        // Playlists and segments are hidden inside PNG files, which the player can't read.
+        // A local server unwraps them on the fly.
+        val (finalUrl, playlist) = client.newCall(GET(playlistUrl, playlistHeaders)).execute().use { res ->
+            if (!res.isSuccessful) throw Exception("Playlist error: HTTP ${res.code}")
+            val bytes = res.body.bytes()
+            res.request.url to String(PngContainer.unwrap(bytes) ?: bytes, Charsets.UTF_8)
+        }
+        if (!playlist.startsWith("#EXTM3U")) throw Exception("No available videos")
+
+        if (!m3u8Server.isRunning()) m3u8Server.startServer()
+
+        val variants = playlist.lines().zipWithNext()
+            .filter { (tag, _) -> tag.startsWith("#EXT-X-STREAM-INF") }
+            .mapNotNull { (tag, uri) ->
+                val height = RESOLUTION_REGEX.find(tag)?.groupValues?.get(1)
+                finalUrl.resolve(uri.trim())?.toString()?.let { it to height }
+            }
+
+        if (variants.isEmpty()) {
+            val quality = QUALITY_REGEX.find(finalUrl.encodedPath)?.groupValues?.get(1)
+            return listOf(createVideo(finalUrl.toString(), quality))
+        }
+
+        return variants.map { (url, height) -> createVideo(url, height) }
+    }
+
+    private fun createVideo(playlistUrl: String, height: String?): Video {
+        val localUrl = m3u8Server.processM3u8Url(playlistUrl) ?: throw Exception("Local server not running")
+        return Video(localUrl, height?.let { "${it}p" } ?: "HLS", localUrl)
     }
 
     // Sorts by quality
@@ -476,6 +594,15 @@ class RouVideo(
 
     private val resolutionRegex = Regex("""Resolution: (\d+)p""")
     companion object {
+        private val RESOLUTION_REGEX = Regex("""RESOLUTION=\d+x(\d+)""")
+        private val QUALITY_REGEX = Regex("""-(\d{3,4})/[^/]*$""")
+        private val CARD_RESOLUTION_REGEX = Regex("""(\d{3,4})[pP]""")
+        private val VIDEO_CODE_REGEX = Regex("""\bvid:"([^"]*)"""")
+        private val VIDEO_REF_REGEX = Regex("""\bref:"([^"]*)"""")
+        private val VIDEO_LIKE_REGEX = Regex("""\blikeCount:(\d+)""")
+        private val ISO_DURATION_REGEX = Regex("""PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?""")
+        private val EV_REGEX = Regex("""\bev:\${'$'}R\[\d+]=\{d:"([^"]+)",k:(\d+)}""")
+
         internal fun resolutionDesc(resolution: String) = "Resolution: ${resolution}p"
 
         private const val VIDEO_SLUG = "v"

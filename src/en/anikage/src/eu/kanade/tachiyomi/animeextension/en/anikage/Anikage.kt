@@ -177,10 +177,15 @@ class Anikage :
     override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> {
         val animeId = anime.url.removeSuffix("/").substringAfterLast("/")
 
-        val episodesData = client.newCall(episodeListRequest(anime))
+        // The endpoint returns a bare array now; older deployments wrapped it in { episodes: [...] }
+        val body = client.newCall(episodeListRequest(anime))
             .awaitSuccess()
-            .parseAs<EpisodeListResponse>()
-            .episodes
+            .use { it.body.string() }
+        val episodesData = if (body.trimStart().startsWith("[")) {
+            body.parseAs<List<EpisodeResult>>()
+        } else {
+            body.parseAs<EpisodeListResponse>().episodes
+        }
 
         val episode = episodesData.reversed().map {
             SEpisode.create().apply {

@@ -2,8 +2,6 @@ package eu.kanade.tachiyomi.animeextension.all.rouvideo
 
 import android.util.Base64
 import eu.kanade.tachiyomi.animeextension.all.rouvideo.RouVideo.Companion.resolutionDesc
-import eu.kanade.tachiyomi.animeextension.all.rouvideo.RouVideoFilter.SORT_LIKE_KEY
-import eu.kanade.tachiyomi.animeextension.all.rouvideo.RouVideoFilter.SORT_VIEW_KEY
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
@@ -11,128 +9,14 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import java.text.SimpleDateFormat
 import java.util.Locale
+import java.util.TimeZone
 import kotlin.time.Duration.Companion.seconds
 
 internal object RouVideoDto {
-    @Serializable
-    data class VideoList(
-        val props: PropsObject,
-    ) {
-        @Serializable
-        data class PropsObject(
-            val pageProps: PagePropsObject,
-        ) {
-            @Serializable
-            data class PagePropsObject(
-                val order: String? = null, // createdAt...
-                val videos: List<Video>,
-                val pageNum: Int,
-                val totalPage: Int,
-                val totalVideoNum: Int,
-                val tagsForCNAV: List<TagItem>? = null,
-                val tags91: List<TagItem>? = null,
-                val tagsOF: List<TagItem>? = null, // OnlyFans, only in tag browse
-                val hotSearches: List<String>? = null, // only in Search
-            ) {
-                fun toAnimePage(): AnimesPage = AnimesPage(
-                    videos.map { video -> video.toSAnime() },
-                    pageNum < totalPage,
-                )
-            }
-        }
-    }
-
-    @Serializable
-    data class HotVideoList(
-        val props: PropsObject,
-    ) {
-        @Serializable
-        data class PropsObject(
-            val pageProps: PagePropsObject,
-        ) {
-            @Serializable
-            data class PagePropsObject(
-                val latestVideos: List<Video>,
-                val dailyHotCNAV: List<Video>,
-                val dailyHotSelfie: List<Video>,
-                val dailyHot91: List<Video>,
-                val dailyOnlyFans: List<Video>,
-                val dailyJV: List<Video>,
-                val hotCNAV: List<Video>,
-                val hotSelfie: List<Video>,
-                val hot91: List<Video>,
-            ) {
-                fun toAnimePage(sort: String?): AnimesPage = AnimesPage(
-                    listOf(
-                        latestVideos,
-                        dailyHotCNAV,
-                        dailyHotSelfie,
-                        dailyHot91,
-                        dailyOnlyFans,
-                        dailyJV,
-                        hotCNAV,
-                        hotSelfie,
-                        hot91,
-                    ).flatten()
-                        .sortedWith { vid1, vid2 ->
-                            when (sort) {
-                                SORT_VIEW_KEY -> {
-                                    if (vid1.viewCount > vid2.viewCount) {
-                                        -1
-                                    } else if (vid1.viewCount < vid2.viewCount) {
-                                        1
-                                    } else {
-                                        vid2.createdAt.compareTo(vid1.createdAt)
-                                    }
-                                }
-
-                                SORT_LIKE_KEY -> {
-                                    if (vid1.likeCount == null && vid2.likeCount != null) {
-                                        1
-                                    } else if (vid1.likeCount != null && vid2.likeCount == null) {
-                                        -1
-                                    } else if (vid1.likeCount != null && vid2.likeCount != null) {
-                                        if (vid1.likeCount > vid2.likeCount) {
-                                            -1
-                                        } else {
-                                            1
-                                        }
-                                    } else {
-                                        vid2.createdAt.compareTo(vid1.createdAt)
-                                    }
-                                }
-
-                                else -> vid2.createdAt.compareTo(vid1.createdAt)
-                            }
-                        }
-                        .associateBy { it.id }
-                        .map { (_, video) -> video.toSAnime() },
-                    false,
-                )
-            }
-        }
-    }
-
     fun List<Video>.toAnimePage(): AnimesPage = AnimesPage(
         map { video -> video.toSAnime() },
         false,
     )
-
-    @Serializable
-    data class VideoDetails(
-        val props: PropsObject,
-    ) {
-        @Serializable
-        data class PropsObject(
-            val pageProps: PagePropsObject,
-        ) {
-            @Serializable
-            data class PagePropsObject(
-                val video: Video,
-                val relatedVideos: List<Video>,
-            )
-        }
-    }
 
     @Serializable
     data class Video(
@@ -195,62 +79,6 @@ internal object RouVideoDto {
     }
 
     @Serializable
-    data class TagList(
-        val props: PropsObject,
-    ) {
-        @Serializable
-        data class PropsObject(
-            val pageProps: PagePropsObject,
-        ) {
-            @Serializable
-            data class PagePropsObject(
-                val gcAV: List<TagItem>,
-                val madouAV: List<TagItem>,
-                val v91: List<TagItem>,
-                val onlyfans: List<TagItem>,
-            ) {
-                fun toTagList(): Tags = listOf(
-                    gcAV,
-                    madouAV,
-                    v91,
-                    onlyfans,
-                ).flatten()
-                    .map { Pair(it.name, it.name) }
-                    .toTypedArray()
-            }
-        }
-    }
-
-    @Serializable
-    data class TagItem(
-        @SerialName("id")
-        val name: String,
-        val count: Int,
-        val parent: String,
-        val level: Int, // usually 0
-    )
-
-    /**
-     * The playable HLS link is no longer served by the `/api/v/{id}` endpoint (it now returns
-     * `{}`). Instead the detail page's `__NEXT_DATA__` carries an obfuscated `ev` blob: a base64
-     * payload whose bytes are each shifted up by `k`. Undo the shift, then parse [PlayInfo].
-     */
-    @Serializable
-    data class PlayPage(
-        val props: Props,
-    ) {
-        @Serializable
-        data class Props(
-            val pageProps: PageProps,
-        ) {
-            @Serializable
-            data class PageProps(
-                val ev: Ev? = null,
-            )
-        }
-    }
-
-    @Serializable
     data class Ev(
         val d: String,
         val k: Int,
@@ -276,8 +104,12 @@ internal object RouVideoDto {
     )
 
     private val DATE_FORMATTER by lazy {
-        SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.ENGLISH)
+        SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.ENGLISH).apply {
+            timeZone = TimeZone.getTimeZone("UTC")
+        }
     }
 
-    private fun String.toDate(): Long = runCatching { DATE_FORMATTER.parse(trim())?.time }.getOrNull() ?: 0L
+    fun parseDate(value: String): Long = runCatching { DATE_FORMATTER.parse(value.trim())?.time }.getOrNull() ?: 0L
+
+    private fun String.toDate(): Long = parseDate(this)
 }

@@ -3,6 +3,7 @@ package eu.kanade.tachiyomi.animeextension.es.lacartoons
 import androidx.preference.ListPreference
 import androidx.preference.PreferenceScreen
 import aniyomi.lib.okruextractor.OkruExtractor
+import aniyomi.lib.rpmextractor.RpmExtractor
 import aniyomi.lib.sendvidextractor.SendvidExtractor
 import aniyomi.lib.streamwishextractor.StreamWishExtractor
 import aniyomi.lib.universalextractor.UniversalExtractor
@@ -135,6 +136,8 @@ class Lacartoons :
         val embedUrl = url.lowercase()
         val extractor = SendvidExtractor(client, headers)
         return when {
+            embedUrl.contains("rpmvid") || embedUrl.contains("rpmshare") || embedUrl.contains("rpmstream") -> RpmExtractor(client, headers).videosFromUrl(url, siteHost = "www.lacartoons.com")
+
             embedUrl.contains("ok.ru") || embedUrl.contains("okru") -> OkruExtractor(client).videosFromUrl(url)
 
             embedUrl.contains("filelions") || embedUrl.contains("lion") -> StreamWishExtractor(client, headers).videosFromUrl(url, videoNameGen = { "FileLions:$it" })
