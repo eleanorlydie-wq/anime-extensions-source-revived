@@ -47,8 +47,21 @@ class PiFansubs :
     private fun getPlayerVideos(url: String): List<Video> = when {
         "https://vidhide" in url -> runBlocking { vidHideExtractor.videosFromUrl(url) }
         "https://blembed" in url -> blembedExtractor.videosFromUrl(url)
+        "fsst.online" in url || "incvideo" in url -> incVideoVideos(url)
         else -> emptyList<Video>()
     }
+
+    private fun incVideoVideos(url: String): List<Video> = runCatching {
+        val page = client.newCall(GET(url, headers)).execute().use { it.body.string() }
+        val file = INC_FILE_REGEX.find(page)?.groupValues?.get(1) ?: return emptyList()
+        val playerHeaders = headers.newBuilder().set("Referer", "https://incvideo1.online/").build()
+        file.split(",[").map { it.removePrefix("[") }.mapNotNull { entry ->
+            val quality = entry.substringBefore("]")
+            val videoUrl = entry.substringAfter("]").trimEnd('/', ',')
+            if (!videoUrl.startsWith("http")) return@mapNotNull null
+            Video(videoUrl, "IncVideo - $quality", videoUrl, playerHeaders)
+        }
+    }.getOrDefault(emptyList())
 
     // =========================== Anime Details ============================
     override fun Document.getDescription(): String = select("$additionalInfoSelector p")
@@ -57,4 +70,8 @@ class PiFansubs :
 
     // =============================== Latest ===============================
     override fun latestUpdatesRequest(page: Int) = GET("$baseUrl/episodios/page/$page", headers)
+
+    companion object {
+        private val INC_FILE_REGEX = Regex("""file:\s*"(\[[^"]+)"""")
+    }
 }

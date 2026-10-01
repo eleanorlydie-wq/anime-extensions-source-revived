@@ -66,9 +66,9 @@ class AV1Encodes :
     // POPULAR
     // ══════════════════════════════════════════════════════════════════════════
 
-    override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/stats#top-downloads", headers)
+    override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/anime?sort=episodes&page=$page", headers)
 
-    override fun popularAnimeParse(response: Response): AnimesPage = AnimesPage(parseStatsPage(response.useAsJsoup()), false)
+    override fun popularAnimeParse(response: Response): AnimesPage = parseAnimeListPage(response.useAsJsoup())
 
     private val seasonRegex by lazy { Regex("""\[S\d""") }
     private val animeNameRegex by lazy { Regex("""\[S\d{1,2}(?:-E\d+)?]\s*([^\[]+?)\s*\[""") }
@@ -315,7 +315,7 @@ class AV1Encodes :
         }.distinctBy { it.url }
 
         val hasNextPage = doc.selectFirst(
-            "a[rel=next], .pagination .next, a:contains(Next)",
+            "a[rel=next], a.next-page, .pagination .next, a:contains(Next)",
         ) != null
 
         return AnimesPage(animes.fetchMissingCovers(), hasNextPage)

@@ -16,7 +16,7 @@ import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 
-class LaMovieEmbedExtractor(
+class VimeosExtractor(
     private val client: OkHttpClient,
     private val headers: Headers,
 ) {
@@ -56,7 +56,7 @@ class LaMovieEmbedExtractor(
             }
         }
 
-        val scriptUnpacked = SCRIPT_REGEX.find(body)?.value?.let { script ->
+        val scriptUnpacked = extractPackedScript(body)?.let { script ->
             JsUnpacker.unpackAndCombine(script) ?: manualUnpack(script) ?: script
         }
 
@@ -93,6 +93,12 @@ class LaMovieEmbedExtractor(
             videoNameGen = videoNameGen,
             subtitleList = subtitleList,
         )
+    }
+
+    private fun extractPackedScript(body: String): String? {
+        val start = body.indexOf("eval(function(p,a,c,k,e,d)").takeIf { it >= 0 } ?: return null
+        val end = body.indexOf("</script>", start).takeIf { it >= 0 } ?: body.length
+        return body.substring(start, end)
     }
 
     private fun String.unescapeUrl(): String = replace("\\/", "/").replace("&amp;", "&")
@@ -158,7 +164,6 @@ class LaMovieEmbedExtractor(
             pattern = """<script\s+id=['"]config['"][^>]*>(\{[\s\S]*?\})</script>""",
             options = setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL),
         )
-        private val SCRIPT_REGEX = Regex("""eval\(function\(p,a,c,k,e,d\)[\s\S]*?\.split('\|')\)\)""")
         private val PACKER_REGEX = Regex(
             pattern = """eval\(function\(p,a,c,k,e,d\)\{[\s\S]*?\}\('([^']*)',(\\d+),(\\d+),'([^']*)'\.split\('\|'\)\)""",
             options = setOf(RegexOption.DOT_MATCHES_ALL),

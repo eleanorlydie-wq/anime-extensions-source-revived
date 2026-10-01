@@ -25,7 +25,7 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
-import eu.kanade.tachiyomi.network.awaitSuccess
+import eu.kanade.tachiyomi.network.await
 import keiyoushi.utils.getPreferencesLazy
 import keiyoushi.utils.parallelCatchingFlatMap
 import keiyoushi.utils.parallelCatchingFlatMapBlocking
@@ -142,6 +142,8 @@ open class PelisForte :
         },
     )
 
+    private val noRedirectClient by lazy { client.newBuilder().followRedirects(false).build() }
+
     private fun fetchUrls(text: String?): List<String> {
         if (text.isNullOrEmpty()) return listOf()
         val linkRegex = "(http|ftp|https)://([\\w_-]+(?:\\.[\\w_-]+)+)([\\w.,@?^=%&:/~+#-]*[\\w@?^=%&/~+#-])".toRegex()
@@ -165,9 +167,9 @@ open class PelisForte :
                 else -> ""
             }
 
-            val locationsDdh = client.newCall(
+            val locationsDdh = noRedirectClient.newCall(
                 GET(player, headers = headers.newBuilder().add("referer", src).build()),
-            ).awaitSuccess().use { it.networkResponse.toString() }
+            ).await().use { it.header("Location") }
 
             fetchUrls(locationsDdh).parallelCatchingFlatMap { serverVideoResolver(it, prefix, src) }
         }
@@ -215,7 +217,7 @@ open class PelisForte :
         "filemoon" to listOf("filemoon", "moonplayer", "moviesm4u", "files.im"),
         "uqload" to listOf("uqload"),
         "mp4upload" to listOf("mp4upload"),
-        "streamwish" to listOf("wishembed", "streamwish", "strwish", "wish", "Kswplayer", "Swhoi", "Multimovies", "Uqloads", "neko-stream", "swdyu", "iplayerhls", "streamgg"),
+        "streamwish" to listOf("wishembed", "streamwish", "strwish", "wish", "Kswplayer", "Swhoi", "Multimovies", "Uqloads", "neko-stream", "swdyu", "iplayerhls", "streamgg", "okhd"),
         "doodstream" to listOf("doodstream", "dood.", "ds2play", "doods.", "ds2play", "ds2video", "dooood", "d000d", "d0000d"),
         "streamlare" to listOf("streamlare", "slmaxed"),
         "yourupload" to listOf("yourupload", "upload"),

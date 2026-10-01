@@ -47,16 +47,19 @@ class PinoyMoviePedia :
     override fun videoListParse(response: Response): List<Video> {
         val document = response.asJsoup()
         val players = document.select("ul#playeroptionsul li")
-        return players.parallelFlatMapBlocking { player ->
+        // admin-ajax is blocked on this site, so the page's own embedded player is the fallback.
+        val embeddedUrl = document.selectFirst("iframe.metaframe")?.attr("abs:src")?.takeIf(String::isNotBlank)
+        return players.withIndex().toList().parallelFlatMapBlocking { (index, player) ->
             val name = player.selectFirst("span.title")!!.text()
-            val url = getPlayerUrl(player)
+            val url = runCatching { getPlayerUrl(player) }.getOrNull()
+                ?: embeddedUrl?.takeIf { index == 0 }
                 ?: return@parallelFlatMapBlocking emptyList<Video>()
             extractVideos(url, name)
         }
     }
 
     private fun extractVideos(url: String, lang: String): List<Video> = when {
-        "dood" in url -> doodExtractor.videosFromUrl(url, lang)
+        DOOD_HOSTS.any { it in url } -> doodExtractor.videosFromUrl(url, lang)
         "mixdrop" in url -> mixDropExtractor.videosFromUrl(url, lang)
         else -> null
     } ?: emptyList()
@@ -71,10 +74,11 @@ class PinoyMoviePedia :
 
         return client.newCall(POST("$baseUrl/wp-admin/admin-ajax.php", headers, body))
             .execute().body.string()
-            .substringAfter("\"embed_url\":\"")
-            .substringBefore("\",")
-            .replace("\\", "")
-            .takeIf(String::isNotBlank)
+            .takeIf { "\"embed_url\":\"" in it }
+            ?.substringAfter("\"embed_url\":\"")
+            ?.substringBefore("\",")
+            ?.replace("\\", "")
+            ?.takeIf(String::isNotBlank)
     }
 
     // ============================== Filters ===============================
@@ -152,5 +156,6 @@ class PinoyMoviePedia :
         private const val PREF_SERVER_KEY = "preferred_server"
         private const val PREF_SERVER_DEFAULT = "DoodStream"
         private val SERVER_LIST = arrayOf("DoodStream", "MixDrop")
+        private val DOOD_HOSTS = listOf("dood", "playmogo", "myvidplay", "ds2play", "d000d")
     }
 }

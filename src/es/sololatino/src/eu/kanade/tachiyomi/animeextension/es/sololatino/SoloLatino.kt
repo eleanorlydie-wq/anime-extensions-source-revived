@@ -17,6 +17,7 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.multisrc.dooplay.DooPlay
 import eu.kanade.tachiyomi.network.GET
+import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.network.awaitSuccess
 import keiyoushi.lib.cryptoaes.CryptoAES
 import keiyoushi.utils.bodyString
@@ -32,14 +33,20 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.FormBody
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import java.net.URLDecoder
+import java.security.MessageDigest
 import java.text.SimpleDateFormat
 import java.util.Locale
+import javax.crypto.Cipher
+import javax.crypto.spec.IvParameterSpec
+import javax.crypto.spec.SecretKeySpec
 
 class SoloLatino :
     DooPlay(
@@ -157,6 +164,10 @@ class SoloLatino :
             }.let(links::addAll)
 
             if (links.isEmpty()) {
+                links.addAll(resolvePlayerTokens(result, path))
+            }
+
+            if (links.isEmpty()) {
                 handleEmptyLinks(result, links, path)
             }
 
@@ -180,6 +191,44 @@ class SoloLatino :
         parseLinks(bData)
     } catch (_: Exception) {
         emptyList()
+    }
+
+    // The site now ships each server as an opaque token that must be exchanged for the embed url
+    // through a CSRF-protected endpoint (same flow as its own player script).
+    private suspend fun resolvePlayerTokens(result: String, referer: String): List<Pair<String, String>> {
+        val tokens = PLAYER_TOKEN_REGEX.findAll(result).map { it.groupValues[1] }.distinct().toList()
+        if (tokens.isEmpty()) return emptyList()
+
+        val csrfHeaders = headersBuilder().set("Referer", referer).build()
+        val cookies = client.newCall(GET("$baseUrl/sanctum/csrf-cookie", csrfHeaders)).awaitSuccess().use { response ->
+            response.headers("Set-Cookie").associate {
+                val pair = it.substringBefore(";")
+                pair.substringBefore("=") to pair.substringAfter("=")
+            }
+        }
+        val xsrf = cookies["XSRF-TOKEN"]?.let { URLDecoder.decode(it, "UTF-8") } ?: return emptyList()
+        val cookieHeader = cookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
+
+        val postHeaders = headersBuilder()
+            .set("Referer", referer)
+            .set("Origin", baseUrl)
+            .set("Accept", "application/json")
+            .set("X-XSRF-TOKEN", xsrf)
+            .set("Cookie", cookieHeader)
+            .build()
+
+        val embedUrls = tokens.mapNotNull { token ->
+            runCatching {
+                val body = """{"t":"$token"}""".toRequestBody("application/json".toMediaType())
+                client.newCall(POST("$baseUrl/api/player-url", postHeaders, body)).awaitSuccess()
+                    .parseAs<PlayerUrlDto>().url
+            }.getOrNull()?.takeIf { it.isNotBlank() }
+        }.distinct()
+
+        return embedUrls.flatMap { embedUrl ->
+            val parsed = runCatching { parseLinks(httpGet(embedUrl, referer)) }.getOrDefault(emptyList())
+            parsed.ifEmpty { listOf(embedUrl to "unknown") }
+        }
     }
 
     private suspend fun handleEmptyLinks(result: String, links: MutableList<Pair<String, String>>, referer: String) {
@@ -247,13 +296,13 @@ class SoloLatino :
     }
 
     private val conventions = listOf(
-        "streamwish" to listOf("wishembed", "streamwish", "strwish", "wish", "Kswplayer", "Swhoi", "Multimovies", "Uqloads", "neko-stream", "swdyu", "iplayerhls", "streamgg"),
+        "streamwish" to listOf("wishembed", "streamwish", "strwish", "wish", "Kswplayer", "Swhoi", "Multimovies", "Uqloads", "neko-stream", "swdyu", "iplayerhls", "streamgg", "hglink"),
         "uqload" to listOf("uqload"),
         "vidguard" to listOf("vembed", "guard", "listeamed", "bembed", "vgfplay"),
         "doodstream" to listOf("doodstream", "dood.", "ds2play", "doods.", "ds2video", "dooood", "d000d", "d0000d"),
         "voe" to listOf("voe", "tubelessceliolymph", "simpulumlamerop", "urochsunloath", "nathanfromsubject", "yip.", "metagnathtuggers", "donaldlineelse"),
         "filemoon" to listOf("filemoon", "moonplayer", "moviesm4u", "files.im"),
-        "vidhide" to listOf("ahvsh", "streamhide", "guccihide", "streamvid", "vidhide", "kinoger", "smoothpre", "dhtpre", "peytonepre", "earnvids", "ryderjet"),
+        "vidhide" to listOf("ahvsh", "streamhide", "guccihide", "streamvid", "vidhide", "kinoger", "smoothpre", "dhtpre", "peytonepre", "earnvids", "ryderjet", "morencius"),
     )
 
     private fun getFirstMatch(regex: Regex, input: String): String = regex.find(input)?.groupValues?.get(1) ?: ""
@@ -352,6 +401,7 @@ class SoloLatino :
         }
 
         val langs = mapOf("LAT" to "[LAT]", "ESP" to "[CAST]", "SUB" to "[SUB]")
+        val powKey = solveProofOfWork(htmlContent)
 
         items.forEach { item ->
             val languageCode = langs[item.video_language] ?: "unknown"
@@ -359,7 +409,7 @@ class SoloLatino :
             item.sortedEmbeds.forEach { embed ->
                 if (!embed.type.equals("video", ignoreCase = true)) return@forEach
 
-                val decryptedLink = decryptEmbedLink(embed.link)
+                val decryptedLink = decryptEmbedLink(embed.link, powKey)
 
                 decryptedLink?.let { links.add(it to languageCode) }
             }
@@ -368,11 +418,40 @@ class SoloLatino :
         return links.ifEmpty { null }
     }
 
-    private fun decryptEmbedLink(rawLink: String?): String? {
+    // embed69 derives the AES key from a small proof-of-work:
+    // nonce = first n where sha256(challenge + n) starts with `difficulty` zeros,
+    // key = sha256(challenge + nonce + salt).
+    private fun solveProofOfWork(html: String): ByteArray? {
+        val challenge = POW_CHALLENGE_REGEX.find(html)?.groupValues?.get(1) ?: return null
+        val difficulty = POW_DIFFICULTY_REGEX.find(html)?.groupValues?.get(1)?.toIntOrNull() ?: return null
+        val salt = POW_SALT_REGEX.find(html)?.groupValues?.get(1) ?: return null
+        val prefix = "0".repeat(difficulty)
+        val digest = MessageDigest.getInstance("SHA-256")
+        var nonce = 0
+        while (nonce < POW_MAX_NONCE) {
+            val hash = digest.digest("$challenge$nonce".toByteArray()).joinToString("") { "%02x".format(it) }
+            if (hash.startsWith(prefix)) {
+                return digest.digest("$challenge$nonce$salt".toByteArray())
+            }
+            nonce++
+        }
+        return null
+    }
+
+    private fun decryptWithKey(link: String, key: ByteArray): String? = runCatching {
+        val raw = Base64.decode(link, Base64.DEFAULT)
+        val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
+        cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), IvParameterSpec(raw.copyOfRange(0, 16)))
+        String(cipher.doFinal(raw.copyOfRange(16, raw.size)), Charsets.UTF_8)
+    }.getOrNull()
+
+    private fun decryptEmbedLink(rawLink: String?, powKey: ByteArray? = null): String? {
         if (rawLink.isNullOrBlank()) return null
 
         val link = rawLink.trim()
         if (link.startsWith("http", true)) return link
+
+        powKey?.let { key -> decryptWithKey(link, key)?.takeIf { it.startsWith("http") }?.let { return it } }
 
         CryptoAES.decryptCbcIV(link, AES_KEY)?.takeIf { it.isNotBlank() }?.let { return it }
         CryptoAES.decrypt(link, AES_KEY).takeIf { it.isNotBlank() }?.let { return it }
@@ -514,6 +593,9 @@ class SoloLatino :
 
     // ============================= Serialization ===========================
     @Serializable
+    data class PlayerUrlDto(val url: String? = null, val type: String? = null)
+
+    @Serializable
     data class Item(
         val file_id: Int,
         val video_language: String,
@@ -576,6 +658,11 @@ class SoloLatino :
     override val prefQualityEntries = prefQualityValues
 
     companion object {
+        private val PLAYER_TOKEN_REGEX = """data-player-token=["']([^"']+)["']""".toRegex()
+        private val POW_CHALLENGE_REGEX = """POW_CHALLENGE\s*=\s*['"]([^'"]+)['"]""".toRegex()
+        private val POW_DIFFICULTY_REGEX = """POW_DIFFICULTY\s*=\s*(\d+)""".toRegex()
+        private val POW_SALT_REGEX = """POW_SALT\s*=\s*['"]([^'"]+)['"]""".toRegex()
+        private const val POW_MAX_NONCE = 5_000_000
         private val DATA_LINK_REGEX = """dataLink\s*=\s*([^;]+);""".toRegex(RegexOption.DOT_MATCHES_ALL)
         private const val AES_KEY = "Ak7qrvvH4WKYxV2OgaeHAEg2a5eh16vE"
         private const val PREF_LANG_KEY = "preferred_lang"

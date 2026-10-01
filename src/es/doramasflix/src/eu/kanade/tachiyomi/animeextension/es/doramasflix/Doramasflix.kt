@@ -42,8 +42,11 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
+import org.jsoup.nodes.Document
 import uy.kohesive.injekt.injectLazy
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -71,6 +74,11 @@ class Doramasflix :
     private val json: Json by injectLazy()
 
     companion object {
+        private const val ACTION_EPISODE_LINKS = "getEpisodeLinks"
+        private const val ACTION_MOVIE_LINKS = "getMovieLinks"
+        private val ACTION_ID_REGEX = Regex("""createServerReference\)\("([0-9a-f]+)",[^)]*?"(\w+)"\)""")
+        private val ID_REGEX = Regex("""\\?"(?:episode|movie)\\?":\{\\?"_id\\?":\\?"([0-9a-f]{24})""")
+
         private const val PREF_LANGUAGE_KEY = "preferred_language"
         private const val PREF_LANGUAGE_DEFAULT = "[LAT]"
         private val LANGUAGE_LIST = arrayOf(
@@ -228,7 +236,7 @@ class Doramasflix :
                 episode_number = episodeObject.episodeNumber?.toFloat() ?: idx.toFloat()
                 date_upload = dateEp?.toDate() ?: 0L
                 scanlator = if (isUpcoming) "Próximamente..." else null
-                setUrlWithoutDomain(urlSolverByType("episode", episodeObject.slug))
+                setUrlWithoutDomain(urlSolverByType("episode", episodeObject.slug) + "?id=${episodeObject.id}")
             }
         }
     }
@@ -435,38 +443,76 @@ class Doramasflix :
 
     private fun String.toDate(): Long = runCatching { DATE_FORMATTER.parse(trim())?.time }.getOrNull() ?: 0L
 
+    // The site is a Next.js app: links are served by server actions, keyed by an id that
+    // changes between deployments, so it's rediscovered from the JS chunks when it goes stale.
+    private val actionIds = mutableMapOf(
+        ACTION_EPISODE_LINKS to "40c6078a8a671297b1458299a5b27a01081afdcb7e",
+        ACTION_MOVIE_LINKS to "40d13c95d97d42603131850ca52dc09bd280b08d5a",
+    )
+
+    private fun discoverActionIds(document: Document) {
+        val chunks = document.select("script[src*=/_next/static/chunks/]").map { it.absUrl("src") }
+        chunks.parallelCatchingFlatMapBlocking { chunkUrl ->
+            val body = client.newCall(GET(chunkUrl, headers)).awaitSuccess().body.string()
+            ACTION_ID_REGEX.findAll(body).forEach { match ->
+                val (id, name) = match.destructured
+                if (name == ACTION_EPISODE_LINKS || name == ACTION_MOVIE_LINKS) actionIds[name] = id
+            }
+            emptyList<Unit>()
+        }
+    }
+
+    private fun fetchLinks(pageUrl: String, action: String, body: String, document: Document): List<RscLink> {
+        repeat(2) { attempt ->
+            val actionHeaders = headers.newBuilder()
+                .set("Accept", "text/x-component")
+                .set("Next-Action", actionIds.getValue(action))
+                .set("Referer", pageUrl)
+                .build()
+            val result = client.newCall(POST(pageUrl, actionHeaders, body.toRequestBody("text/plain;charset=UTF-8".toMediaType()))).execute()
+            val text = result.use { it.body.string() }
+            val line = text.lineSequence().firstOrNull { it.startsWith("1:[") }
+            if (line != null) return runCatching { json.decodeFromString<List<RscLink>>(line.substring(2)) }.getOrDefault(emptyList())
+            if (attempt == 0) discoverActionIds(document)
+        }
+        return emptyList()
+    }
+
+    // links look like https://embedshortener.co/e/<jwt> where the jwt payload holds base64(url)
+    private fun resolveEmbedLink(link: String): String {
+        if ("embedshortener" !in link) return link
+        return runCatching {
+            val payload = link.substringAfterLast("/").split(".")[1]
+            val claim = String(Base64.decode(payload, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP))
+            val encoded = json.decodeFromString<JsonObject>(claim)["link"]!!.jsonPrimitive.content
+            String(Base64.decode(encoded, Base64.DEFAULT))
+        }.getOrDefault(link)
+    }
+
     override fun videoListParse(response: Response): List<Video> {
-        val document = response.asJsoup()
-        val jsonData = document.selectFirst("script:containsData({\"props\":{\"pageProps\":{)")!!.data()
-        val apolloState = json.decodeFromString<JsonObject>(jsonData).jsonObject["props"]!!.jsonObject["pageProps"]!!.jsonObject["apolloState"]!!.jsonObject
-        val episodeItem = apolloState.entries.firstOrNull { x -> x.key.contains("Episode:") }
+        val pageUrl = response.request.url.toString()
+        val html = response.body.string()
+        val document = org.jsoup.Jsoup.parse(html, pageUrl)
+        val queryId = response.request.url.queryParameter("id")
 
-        val episode = episodeItem?.value?.jsonObject
-            ?: apolloState.entries.firstOrNull { (key, _) -> Regex("\\b(?:Movie|Dorama):[a-zA-Z0-9]+").matches(key) }?.value?.jsonObject
+        val links = when {
+            "/peliculas-online/" in pageUrl -> {
+                val movieId = queryId ?: ID_REGEX.find(html)?.groupValues?.get(1) ?: return emptyList()
+                fetchLinks(pageUrl, ACTION_MOVIE_LINKS, "[{\"movie_id\":\"$movieId\"}]", document)
+            }
 
-        var linksOnline = episode?.get("links_online")?.jsonObject?.get("json")?.jsonArray
-        val bMovies = apolloState.entries.any { x -> x.key.contains("ROOT_QUERY.getMovieLinks(") }
-
-        if (bMovies && linksOnline == null) {
-            linksOnline = apolloState.entries.firstOrNull { x -> x.key.contains("ROOT_QUERY.getMovieLinks(") }
-                ?.value?.jsonObject?.get("links_online")?.jsonObject?.get("json")?.jsonArray
+            else -> {
+                val episodeId = queryId ?: ID_REGEX.find(html)?.groupValues?.get(1) ?: return emptyList()
+                fetchLinks(pageUrl, ACTION_EPISODE_LINKS, "[{\"episode_id\":\"$episodeId\"}]", document)
+            }
         }
 
-        return linksOnline?.parallelCatchingFlatMapBlocking {
-            val link = it.jsonObject["link"]!!.jsonPrimitive.content
-            val lang = it.jsonObject["lang"]?.jsonPrimitive?.content?.getLang() ?: ""
-            serverVideoResolver(link, lang)
-        } ?: apolloState.entries.filter { x -> x.key.contains("ROOT_QUERY.listProblems(") }
-            .mapNotNull { entry ->
-                val server = entry.value.jsonObject["server"]?.jsonObject?.get("json")?.jsonObject
-                val link = server?.get("link")?.jsonPrimitive?.content
-                val lang = server?.get("lang")?.jsonPrimitive?.content?.getLang() ?: ""
-                link?.let { it to lang }
-            }.distinctBy { it.first }
-            .parallelCatchingFlatMapBlocking { (link, lang) ->
-                val finalLink = getRealLink(link)
-                serverVideoResolver(finalLink, lang)
-            }
+        return links.mapNotNull { l ->
+            val link = l.link?.let(::resolveEmbedLink) ?: return@mapNotNull null
+            link to (l.lang?.getLang() ?: "")
+        }.distinctBy { it.first }.parallelCatchingFlatMapBlocking { (link, lang) ->
+            serverVideoResolver(getRealLink(link), lang)
+        }
     }
 
     private suspend fun getRealLink(link: String): String {
