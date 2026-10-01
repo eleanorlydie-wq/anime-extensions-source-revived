@@ -38,11 +38,15 @@ class StreamWishExtractor(private val client: OkHttpClient, private val headers:
         val id = getEmbedId(url)
 
         // If id is already an absolute URL, avoid iterating over all DOMAINS and reuse it directly.
+        // Otherwise try the original host first (StreamWish clones such as hglink.to), then the known domains.
         val isAbsoluteId = id.startsWith("https://") || id.startsWith("http://")
-        val domainsToTry = if (isAbsoluteId) listOf("") else DOMAINS
+        val candidates = if (isAbsoluteId) {
+            listOfNotNull(UrlUtils.fixUrl(id))
+        } else {
+            listOf(embedUrl.toString()) + DOMAINS.mapNotNull { UrlUtils.fixUrl(id, "https://$it") }
+        }
 
-        for (domain in domainsToTry) {
-            val fullUrl = UrlUtils.fixUrl(id, "https://$domain") ?: continue
+        for (fullUrl in candidates.distinct()) {
             try {
                 val response = client.newCall(GET(fullUrl, headers)).await()
                 if (!response.isSuccessful) {

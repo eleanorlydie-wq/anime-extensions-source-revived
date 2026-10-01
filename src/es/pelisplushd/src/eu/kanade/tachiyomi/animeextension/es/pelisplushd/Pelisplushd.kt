@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.animeextension.es.pelisplushd
 
+import android.util.Base64
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.SAnime
@@ -8,24 +9,22 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.multisrc.pelisplus.Filters
 import eu.kanade.tachiyomi.multisrc.pelisplus.PelisPlus
 import eu.kanade.tachiyomi.network.GET
-import eu.kanade.tachiyomi.network.POST
-import eu.kanade.tachiyomi.network.awaitSuccess
 import eu.kanade.tachiyomi.util.asJsoup
+import keiyoushi.utils.bodyString
 import keiyoushi.utils.catchingFlatMapBlocking
 import keiyoushi.utils.flatMapCatching
-import keiyoushi.utils.parallelCatchingFlatMapBlocking
 import keiyoushi.utils.parseAs
-import keiyoushi.utils.toJsonRequestBody
-import keiyoushi.utils.useAsJsoup
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.add
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.putJsonArray
 import okhttp3.Request
 import okhttp3.Response
+import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
+import java.security.MessageDigest
+import javax.crypto.Cipher
+import javax.crypto.spec.IvParameterSpec
+import javax.crypto.spec.SecretKeySpec
 
 class Pelisplushd : PelisPlus() {
 
@@ -37,6 +36,10 @@ class Pelisplushd : PelisPlus() {
 
     companion object {
         private val REGEX_VIDEO_OPTS = "'(https?://[^']*)'".toRegex()
+        private val POW_CHALLENGE_REGEX = """POW_CHALLENGE\s*=\s*['"]([^'"]+)['"]""".toRegex()
+        private val POW_DIFFICULTY_REGEX = """POW_DIFFICULTY\s*=\s*(\d+)""".toRegex()
+        private val POW_SALT_REGEX = """POW_SALT\s*=\s*['"]([^'"]+)['"]""".toRegex()
+        private const val POW_MAX_NONCE = 5_000_000
     }
 
     override fun popularAnimeSelector(): String = "div.Posters a.Posters-link"
@@ -81,32 +84,19 @@ class Pelisplushd : PelisPlus() {
         return REGEX_VIDEO_OPTS.findAll(data).map { it.groupValues[1] }
             .filter { it.contains("embed69.org") }.toList()
             .flatMapCatching { opt ->
-                val docResponse = client.newCall(GET(opt)).execute().useAsJsoup()
+                val html = client.newCall(GET(opt, headers)).execute().bodyString()
+                val docResponse = Jsoup.parse(html)
                 val cryptoScript = docResponse.selectFirst("script:containsData(let dataLink)")?.data()
                 if (!cryptoScript.isNullOrBlank()) {
                     val jsLinksMatch = cryptoScript.substringAfter("let dataLink =").substringBefore("];") + "]"
-                    jsLinksMatch.parseAs<List<DataLinkDto>>().parallelCatchingFlatMapBlocking { data ->
-                        val sortEmbeds = data.sortedEmbeds
-                        val links = sortEmbeds.mapNotNull { it?.link }
-
-                        val postBody = buildJsonObject {
-                            putJsonArray("links") {
-                                links.forEach { add(it) }
+                    val powKey = solveProofOfWork(html)
+                    jsLinksMatch.parseAs<List<DataLinkDto>>().flatMap { data ->
+                        data.sortedEmbeds.filterNotNull()
+                            .filter { it.type.equals("video", true) }
+                            .mapNotNull { embed ->
+                                val link = embed.link?.let { decryptLink(it, powKey) } ?: return@mapNotNull null
+                                (embed.servername ?: "Embed69") to (data.videoLanguage ?: "") to link
                             }
-                        }
-                        val payload = postBody.toJsonRequestBody()
-
-                        val decryptedLinks = client.newCall(POST("https://embed69.org/api/decrypt", body = payload))
-                            .awaitSuccess()
-                            .parseAs<Embed69Dto>().links
-
-                        decryptedLinks.mapNotNull {
-                            val link = it.link
-                            if (link.isEmpty()) return@mapNotNull null
-                            val server = sortEmbeds.getOrNull(it.index)?.servername ?: "Embed69"
-                            val lng = data.videoLanguage ?: ""
-                            (server to lng) to link
-                        }
                     }.catchingFlatMapBlocking {
                         serverVideoResolver(it.third, it.second, it.first)
                     }
@@ -118,6 +108,37 @@ class Pelisplushd : PelisPlus() {
                         }
                 }
             }
+    }
+
+    // embed69 derives the AES key from a small proof-of-work:
+    // nonce = first n where sha256(challenge + n) starts with `difficulty` zeros,
+    // key = sha256(challenge + nonce + salt).
+    private fun solveProofOfWork(html: String): ByteArray? {
+        val challenge = POW_CHALLENGE_REGEX.find(html)?.groupValues?.get(1) ?: return null
+        val difficulty = POW_DIFFICULTY_REGEX.find(html)?.groupValues?.get(1)?.toIntOrNull() ?: return null
+        val salt = POW_SALT_REGEX.find(html)?.groupValues?.get(1) ?: return null
+        val prefix = "0".repeat(difficulty)
+        val digest = MessageDigest.getInstance("SHA-256")
+        var nonce = 0
+        while (nonce < POW_MAX_NONCE) {
+            val hash = digest.digest("$challenge$nonce".toByteArray()).joinToString("") { "%02x".format(it) }
+            if (hash.startsWith(prefix)) {
+                return digest.digest("$challenge$nonce$salt".toByteArray())
+            }
+            nonce++
+        }
+        return null
+    }
+
+    private fun decryptLink(link: String, key: ByteArray?): String? {
+        if (link.startsWith("http", true)) return link
+        if (key == null) return null
+        return runCatching {
+            val raw = Base64.decode(link, Base64.DEFAULT)
+            val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
+            cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), IvParameterSpec(raw.copyOfRange(0, 16)))
+            String(cipher.doFinal(raw.copyOfRange(16, raw.size)), Charsets.UTF_8)
+        }.getOrNull()?.takeIf { it.startsWith("http") }
     }
 
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
@@ -196,17 +217,5 @@ class Pelisplushd : PelisPlus() {
         val link: String? = null,
         val type: String? = null,
         val servername: String? = null,
-    )
-
-    @Serializable
-    data class Embed69Dto(
-        val success: Boolean,
-        val links: List<Embed69Links>,
-    )
-
-    @Serializable
-    data class Embed69Links(
-        val index: Int,
-        val link: String,
     )
 }

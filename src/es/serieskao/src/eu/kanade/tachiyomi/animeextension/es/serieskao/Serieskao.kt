@@ -47,6 +47,10 @@ import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import java.net.URLDecoder
+import java.security.MessageDigest
+import javax.crypto.Cipher
+import javax.crypto.spec.IvParameterSpec
+import javax.crypto.spec.SecretKeySpec
 
 open class Serieskao :
     ParsedAnimeHttpSource(),
@@ -81,28 +85,28 @@ open class Serieskao :
         )
 
         private const val AES_KEY = "Ak7qrvvH4WKYxV2OgaeHAEg2a5eh16vE"
+        private val POW_CHALLENGE_REGEX = """POW_CHALLENGE\s*=\s*['"]([^'"]+)['"]""".toRegex()
+        private val POW_DIFFICULTY_REGEX = """POW_DIFFICULTY\s*=\s*(\d+)""".toRegex()
+        private val POW_SALT_REGEX = """POW_SALT\s*=\s*['"]([^'"]+)['"]""".toRegex()
+        private const val POW_MAX_NONCE = 5_000_000
         private val DATA_LINK_REGEX = """dataLink\s*=\s*([^;]+);""".toRegex(RegexOption.DOT_MATCHES_ALL)
-        private val VIDEO_SOURCES_REGEX = """var\s+videoSources\s*=\s*\[(.+?)]\s*;""".toRegex(RegexOption.DOT_MATCHES_ALL)
-        private val SOURCE_URL_REGEX = """['"]([^'"]+)['"]""".toRegex()
     }
 
-    override fun popularAnimeSelector(): String = "a.poster-card"
+    override fun popularAnimeSelector(): String = "article.card"
 
     override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/series?page=$page")
 
     override fun popularAnimeFromElement(element: Element): SAnime = SAnime.create().apply {
-        setUrlWithoutDomain(element.attr("href"))
-        val rawTitle = element.selectFirst(".poster-card__title")?.text().orEmpty()
-        val normalizedTitle = rawTitle.takeIf { it.isNotBlank() }
-            ?: element.attr("title").removePrefix("VER").trim()
-        title = normalizedTitle.ifBlank { element.text() }
+        setUrlWithoutDomain(element.selectFirst("a.card__link")!!.attr("href"))
+        title = element.selectFirst(".card__title")?.text()
+            ?: element.selectFirst("img")?.attr("alt").orEmpty()
 
         val image = element.selectFirst("img")
         val thumb = image?.attr("src").orEmpty().ifBlank { image?.attr("data-src").orEmpty() }
-        thumbnail_url = thumb.replace("/w154/", "/w500/")
+        thumbnail_url = thumb.replace("/w300/", "/w500/")
     }
 
-    override fun popularAnimeNextPageSelector(): String = "a.page-link"
+    override fun popularAnimeNextPageSelector(): String = "a.pagination__btn[aria-label=Siguiente]"
 
     override fun episodeListParse(response: Response): List<SEpisode> {
         val doc = response.useAsJsoup()
@@ -119,42 +123,29 @@ open class Serieskao :
         }
 
         val episodes = mutableListOf<SEpisode>()
-        val seasonTabs = doc.select("#season-tabs li a[data-tab]")
         val numberRegex = Regex("\\d+")
+        val seasonIds = doc.select("select#temporadas_select option[value]").map { it.attr("value") }
 
-        if (seasonTabs.isEmpty()) {
-            doc.select(".episodes-list a.episode-item").forEachIndexed { index, element ->
-                val episodeNumber = element.selectFirst(".episode-number")?.text()
-                    ?.let { numberRegex.find(it)?.value } ?: (index + 1).toString()
-                val episodeTitle = element.selectFirst(".episode-title")?.text()
-                    ?.ifBlank { "Episodio $episodeNumber" } ?: "Episodio $episodeNumber"
+        val seasonPanes = if (seasonIds.isEmpty()) {
+            listOf("1" to doc.select(".episodes-list"))
+        } else {
+            seasonIds.mapIndexed { index, seasonId ->
+                val seasonNumber = numberRegex.find(seasonId)?.value ?: (index + 1).toString()
+                seasonNumber to doc.select("#$seasonId.episodes-list")
+            }
+        }
+
+        seasonPanes.forEach { (seasonNumber, panes) ->
+            panes.select("a.episode-item").forEach { element ->
+                val episodeNumber = element.selectFirst(".episode-item__number")?.text()
+                    ?.let { numberRegex.find(it)?.value } ?: "0"
+                val episodeTitle = element.selectFirst(".episode-item__title")?.text()
+                    .orEmpty().ifBlank { "Episodio $episodeNumber" }
 
                 episodes += SEpisode.create().apply {
                     episode_number = episodeNumber.toFloatOrNull() ?: 0F
-                    name = "T1 - Episodio $episodeNumber: $episodeTitle"
+                    name = "T$seasonNumber - Episodio $episodeNumber: $episodeTitle"
                     setUrlWithoutDomain(element.attr("href"))
-                }
-            }
-        } else {
-            seasonTabs.forEachIndexed { index, tab ->
-                val seasonId = tab.attr("data-tab")
-                val seasonNumber = numberRegex.find(tab.text())?.value
-                    ?: numberRegex.find(seasonId)?.value
-                    ?: (index + 1).toString()
-
-                val seasonPane = doc.selectFirst("#$seasonId") ?: return@forEachIndexed
-
-                seasonPane.select(".episodes-list a.episode-item").forEach { element ->
-                    val episodeNumber = element.selectFirst(".episode-number")?.text()
-                        ?.let { numberRegex.find(it)?.value } ?: "0"
-                    val episodeTitle = element.selectFirst(".episode-title")?.text()
-                        ?.ifBlank { "Episodio $episodeNumber" } ?: "Episodio $episodeNumber"
-
-                    episodes += SEpisode.create().apply {
-                        episode_number = episodeNumber.toFloatOrNull() ?: 0F
-                        name = "T$seasonNumber - Episodio $episodeNumber: $episodeTitle"
-                        setUrlWithoutDomain(element.attr("href"))
-                    }
                 }
             }
         }
@@ -168,25 +159,17 @@ open class Serieskao :
 
     override fun videoListParse(response: Response): List<Video> {
         val document = response.useAsJsoup()
-        val scriptData = document.select("script")
-            .asSequence()
-            .map(Element::data)
-            .firstOrNull { it.contains("var videoSources") }
-            ?: return emptyList()
-
-        val sourcesBlock = VIDEO_SOURCES_REGEX.find(scriptData)?.groupValues?.get(1) ?: return emptyList()
-        val videoUrls = SOURCE_URL_REGEX.findAll(sourcesBlock)
-            .map { it.groupValues[1] }
-            .filter { it.startsWith("http", ignoreCase = true) }
+        val playerUrls = document.select("iframe#player-iframe[src], iframe[src*=/vidurl/]")
+            .map { it.attr("abs:src") }
+            .filter { it.startsWith("http") }
             .distinct()
-            .toList()
 
-        if (videoUrls.isEmpty()) return emptyList()
+        if (playerUrls.isEmpty()) return emptyList()
 
         val referer = response.request.url.toString()
         val headers = headersBuilder().set("Referer", referer).build()
 
-        return videoUrls.parallelCatchingFlatMapBlocking { videoUrl ->
+        return playerUrls.parallelCatchingFlatMapBlocking { videoUrl ->
             val body = client.newCall(GET(videoUrl, headers)).awaitSuccess().bodyString()
             if (body.isBlank()) return@parallelCatchingFlatMapBlocking emptyList()
 
@@ -217,6 +200,7 @@ open class Serieskao :
         } ?: getFirstMatch(DATA_LINK_REGEX, htmlContent)
 
         val jsonPayload = resolveDataLink(rawExpression) ?: return null
+        val powKey = solveProofOfWork(htmlContent)
 
         val items = runCatching {
             jsonPayload.parseAs<List<Item>>()
@@ -234,7 +218,7 @@ open class Serieskao :
             item.sortedEmbeds.forEach { embed ->
                 if (!"video".equals(embed.type, ignoreCase = true)) return@forEach
 
-                val decryptedLink = decryptEmbedLink(embed.link)
+                val decryptedLink = decryptEmbedLink(embed.link, powKey)
                 decryptedLink?.let { links.add(it to languageCode) }
             }
         }
@@ -294,11 +278,40 @@ open class Serieskao :
         return expr.takeIf { it.isNotBlank() }
     }
 
-    private fun decryptEmbedLink(rawLink: String?): String? {
+    // embed69 derives the AES key from a small proof-of-work:
+    // nonce = first n where sha256(challenge + n) starts with `difficulty` zeros,
+    // key = sha256(challenge + nonce + salt).
+    private fun solveProofOfWork(html: String): ByteArray? {
+        val challenge = POW_CHALLENGE_REGEX.find(html)?.groupValues?.get(1) ?: return null
+        val difficulty = POW_DIFFICULTY_REGEX.find(html)?.groupValues?.get(1)?.toIntOrNull() ?: return null
+        val salt = POW_SALT_REGEX.find(html)?.groupValues?.get(1) ?: return null
+        val prefix = "0".repeat(difficulty)
+        val digest = MessageDigest.getInstance("SHA-256")
+        var nonce = 0
+        while (nonce < POW_MAX_NONCE) {
+            val hash = digest.digest("$challenge$nonce".toByteArray()).joinToString("") { "%02x".format(it) }
+            if (hash.startsWith(prefix)) {
+                return digest.digest("$challenge$nonce$salt".toByteArray())
+            }
+            nonce++
+        }
+        return null
+    }
+
+    private fun decryptWithKey(link: String, key: ByteArray): String? = runCatching {
+        val raw = Base64.decode(link, Base64.DEFAULT)
+        val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
+        cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), IvParameterSpec(raw.copyOfRange(0, 16)))
+        String(cipher.doFinal(raw.copyOfRange(16, raw.size)), Charsets.UTF_8)
+    }.getOrNull()
+
+    private fun decryptEmbedLink(rawLink: String?, powKey: ByteArray? = null): String? {
         if (rawLink.isNullOrBlank()) return null
 
         val link = rawLink.trim()
         if (link.startsWith("http", true)) return link
+
+        powKey?.let { key -> decryptWithKey(link, key)?.takeIf { it.startsWith("http") }?.let { return it } }
 
         CryptoAES.decryptCbcIV(link, AES_KEY)?.takeIf { it.isNotBlank() }?.let { return it }
         CryptoAES.decrypt(link, AES_KEY).takeIf { it.isNotBlank() }?.let { return it }
@@ -378,7 +391,7 @@ open class Serieskao :
 
         arrayOf("mp4upload").any(url) -> mp4uploadExtractor.videosFromUrl(url, headers, prefix = "$prefix ")
 
-        arrayOf("wishembed", "streamwish", "strwish", "wish").any(url) -> {
+        arrayOf("wishembed", "streamwish", "strwish", "wish", "hglink", "iplayerhls", "streamgg").any(url) -> {
             streamWishExtractor.videosFromUrl(url, videoNameGen = { "$prefix StreamWish:$it" })
         }
 
@@ -401,7 +414,7 @@ open class Serieskao :
 
         arrayOf("streamtape", "stp", "stape").any(url) -> streamTapeExtractor.videosFromUrl(url, quality = "$prefix StreamTape")
 
-        arrayOf("ahvsh", "streamhide", "guccihide", "streamvid", "vidhide").any(url) -> vidHideExtractor.videosFromUrl(url, videoNameGen = { "$prefix StreamHideVid:$it" })
+        arrayOf("ahvsh", "streamhide", "guccihide", "streamvid", "vidhide", "kinoger", "smoothpre", "dhtpre", "peytonepre", "earnvids", "ryderjet", "morencius").any(url) -> vidHideExtractor.videosFromUrl(url, videoNameGen = { "$prefix StreamHideVid:$it" })
 
         arrayOf("vembed", "guard", "listeamed", "bembed", "vgfplay").any(url) -> vidGuardExtractor.videosFromUrl(url, prefix = "$prefix ")
 
@@ -449,11 +462,10 @@ open class Serieskao :
     override fun searchAnimeSelector(): String = popularAnimeSelector()
 
     override fun animeDetailsParse(document: Document): SAnime = SAnime.create().apply {
-        title = document.selectFirst("h1.m-b-5")?.text()?.ifBlank { "Sin título" } ?: "Sin título"
-        thumbnail_url = document.selectFirst("div.card-body div.row div.col-sm-3 img.img-fluid")
-            ?.attr("src")?.replace("/w154/", "/w500/")
-        description = document.selectFirst("div.col-sm-4 div.text-large")?.ownText()
-        genre = document.select("div.p-v-20.p-h-15.text-center a span").joinToString { it.text() }
+        title = document.selectFirst("h1.detail-hero__title")?.text()?.ifBlank { "Sin título" } ?: "Sin título"
+        thumbnail_url = document.selectFirst("figure.detail-hero__poster img")?.attr("src")
+        description = document.selectFirst(".detail-hero__desc")?.text()
+        genre = document.select("a.detail-hero__genre").joinToString { it.text() }
         status = SAnime.COMPLETED
     }
 

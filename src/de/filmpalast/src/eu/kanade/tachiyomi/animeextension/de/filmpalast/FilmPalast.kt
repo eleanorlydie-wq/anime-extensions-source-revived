@@ -3,6 +3,7 @@ package eu.kanade.tachiyomi.animeextension.de.filmpalast
 import androidx.preference.ListPreference
 import androidx.preference.MultiSelectListPreference
 import androidx.preference.PreferenceScreen
+import aniyomi.lib.vidaraextractor.VidaraExtractor
 import aniyomi.lib.voeextractor.VoeExtractor
 import eu.kanade.tachiyomi.animeextension.de.filmpalast.extractors.EvoloadExtractor
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
@@ -73,6 +74,8 @@ class FilmPalast :
         return videosFromElement(document)
     }
 
+    private val vidaraExtractor by lazy { VidaraExtractor(client, headers) }
+
     private fun videosFromElement(document: Document): List<Video> {
         val elements = document.select("ul.currentStreamLinks > li > a")
         val hosterSelection = preferences.getStringSet(PREF_SELECTION_KEY, PREF_SELECTION_DEFAULT)!!
@@ -120,6 +123,8 @@ class FilmPalast :
                         }
                     }
                 }
+
+                "vidara" in url -> runCatching { vidaraExtractor.videosFromUrl(url) }.getOrNull()
 
                 "wolfstream" in url && hosterSelection.contains("wolf") -> {
                     client.newCall(GET(url, headers)).execute()

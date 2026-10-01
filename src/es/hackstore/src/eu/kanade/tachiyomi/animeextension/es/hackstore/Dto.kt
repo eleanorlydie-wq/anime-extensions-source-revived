@@ -1,4 +1,4 @@
-package eu.kanade.tachiyomi.animeextension.es.lamovie
+package eu.kanade.tachiyomi.animeextension.es.hackstore
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
