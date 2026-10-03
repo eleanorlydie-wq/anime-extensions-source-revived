@@ -50,7 +50,7 @@ class Anime1 :
     override fun headersBuilder() = super.headersBuilder().add("referer", "$baseUrl/")
 
     private val videoApiUrl = "https://v.anime1.me/api"
-    private val dataUrl = "https://d1zquzjgwo9yb.cloudfront.net"
+    private val dataUrl = "https://anime1.me/animelist.json"
     private val uploadDateFormat: SimpleDateFormat by lazy {
         SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssZ", Locale.getDefault())
     }
@@ -118,7 +118,7 @@ class Anime1 :
 
     override suspend fun getLatestUpdates(page: Int): AnimesPage {
         if (!this::data.isInitialized) {
-            data = client.newCall(GET("$dataUrl/?_=${System.currentTimeMillis()}")).awaitSuccess()
+            data = client.newCall(GET("$dataUrl?_=${System.currentTimeMillis()}")).awaitSuccess()
                 .parseAs()
         }
         val items = data.subList((page - 1) * PAGE_SIZE, (page * PAGE_SIZE).coerceAtMost(data.size))

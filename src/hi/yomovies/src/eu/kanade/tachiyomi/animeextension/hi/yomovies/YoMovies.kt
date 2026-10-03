@@ -29,7 +29,7 @@ class YoMovies :
 
     // TODO: Check frequency of url changes to potentially
     // add back overridable baseurl preference
-    override val baseUrl = "https://yomovies.foundation"
+    override val baseUrl = "https://yomovies.rentals"
 
     override val lang = "hi"
 

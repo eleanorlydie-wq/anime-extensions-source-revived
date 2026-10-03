@@ -29,7 +29,7 @@ class Toonitalia :
 
     override val name = "Toonitalia"
 
-    override val baseUrl = "https://toonitalia.green"
+    override val baseUrl = "https://toonitalia.xyz"
 
     override val lang = "it"
 

@@ -2,8 +2,8 @@ ext {
     extName = 'DopeFlix'
     extClass = '.DopeFlix'
     themePkg = 'dopeflix'
-    baseUrl = 'https://citysonic.tv'
-    overrideVersionCode = 2
+    baseUrl = 'https://flixhq.to'
+    overrideVersionCode = 3
 }
 
 apply plugin: "kei.plugins.extension.legacy"

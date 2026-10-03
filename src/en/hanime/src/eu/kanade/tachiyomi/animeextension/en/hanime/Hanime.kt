@@ -194,14 +194,14 @@ class Hanime :
                     }
                 }.build()
 
-                val response = client.newCall(GET("$cdnBaseUrl/api/v10/search_hvs", searchHeaders)).await()
+                val response = client.newCall(GET("$cdnBaseUrl/api/v11/search_hvs", searchHeaders)).await()
                 val result = response.use { resp ->
                     val jsonLine = resp.body.string()
                     if (jsonLine.isEmpty()) {
                         Log.w(TAG, "fetchSearchHits() — search API returned empty body")
                         emptyList()
                     } else {
-                        jsonLine.parseAs<List<HitsModel>>()
+                        if (jsonLine.trimStart().startsWith("[")) jsonLine.parseAs<List<HitsModel>>() else jsonLine.parseAs<SearchHvsResponse>().data
                     }
                 }
                 cachedSearchHits = result
@@ -1128,7 +1128,7 @@ class Hanime :
 
     companion object {
         private const val TAG = "Hanime"
-        private const val DEFAULT_CDN_BASE_URL = "https://cached.freeanimehentai.net"
+        private const val DEFAULT_CDN_BASE_URL = "https://guest.freeanimehentai.net"
 
         private const val PREF_QUALITY_KEY = "preferred_quality"
         private const val PREF_QUALITY_DEFAULT = "1080p"
