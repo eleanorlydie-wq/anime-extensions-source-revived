@@ -92,6 +92,7 @@ jobs:
     timeout-minutes: 30
     if: ${{ toJson(fromJson(needs.prepare.outputs.matrix).chunk) != '[]' }}
     strategy:
+      fail-fast: false
       matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
     steps:
       - name: Checkout ${{ github.ref_name }} branch
@@ -128,7 +129,7 @@ jobs:
           KAISVA: ${{ secrets.KAISVA }}
           TMDB_API: ${{ secrets.TMDB_API }}
         run: |
-          ./gradlew $MODULES
+          ./gradlew --no-configuration-cache $MODULES
 
       - name: Upload APKs (${{ matrix.chunk.number }})
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

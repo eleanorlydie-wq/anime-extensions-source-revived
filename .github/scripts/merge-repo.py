@@ -23,6 +23,18 @@ if SOURCE_SRC.is_dir():
                 print(f"pruning removed extension {module}")
                 to_delete.append(module)
 
+with LOCAL_REPO.joinpath("index.min.json").open() as local_index_file:
+    local_index = json.load(local_index_file)
+
+# Only drop the published copy of a module that was actually rebuilt (or whose source is gone).
+# If a build chunk failed, its modules never reached the local index, and deleting them here would
+# silently remove those extensions from the repo until the next successful build.
+built = {item["pkg"].removeprefix(PKG_PREFIX) for item in local_index}
+skipped = [m for m in to_delete if m not in built and SOURCE_SRC.joinpath(*m.split(".", 1)).is_dir()]
+for module in skipped:
+    print(f"keeping {module}: no new build")
+to_delete = [m for m in to_delete if m not in skipped]
+
 for module in to_delete:
     apk_name = f"aniyomi-{module}-v*.*.apk"
     icon_name = f"eu.kanade.tachiyomi.animeextension.{module}.png"
@@ -38,9 +50,6 @@ shutil.copytree(src=LOCAL_REPO.joinpath("icon"), dst=REMOTE_REPO.joinpath("icon"
 
 with REMOTE_REPO.joinpath("index.json").open() as remote_index_file:
     remote_index = json.load(remote_index_file)
-
-with LOCAL_REPO.joinpath("index.min.json").open() as local_index_file:
-    local_index = json.load(local_index_file)
 
 index = [
     item for item in remote_index
