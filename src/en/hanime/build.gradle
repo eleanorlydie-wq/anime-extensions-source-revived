@@ -1,7 +1,7 @@
 ext {
     extName = 'hanime.tv'
     extClass = '.Hanime'
-    extVersionCode = 24
+    extVersionCode = 25
     isNsfw = true
 }
 
@@ -16,7 +16,6 @@ android {
 }
 
 dependencies {
-    implementation(project(":lib:playlistutils"))
     //noinspection UseTomlInstead
     implementation("com.dylibso.chicory:runtime:1.7.5")
 }
