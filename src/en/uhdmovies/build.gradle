@@ -1,7 +1,7 @@
 ext {
     extName = 'UHD Movies'
     extClass = '.UHDMovies'
-    extVersionCode = 20
+    extVersionCode = 21
 }
 
 apply plugin: "kei.plugins.extension.legacy"
