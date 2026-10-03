@@ -3,7 +3,6 @@ package eu.kanade.tachiyomi.animeextension.en.hanime
 import android.text.InputType
 import android.util.Log
 import androidx.preference.PreferenceScreen
-import aniyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
@@ -13,26 +12,33 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
+import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.network.await
 import keiyoushi.utils.addEditTextPreference
 import keiyoushi.utils.addListPreference
-import keiyoushi.utils.addSwitchPreference
 import keiyoushi.utils.bodyString
 import keiyoushi.utils.getPreferencesLazy
-import keiyoushi.utils.parallelFlatMap
 import keiyoushi.utils.parseAs
 import keiyoushi.utils.useAsJsoup
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import okhttp3.Headers
-import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
-import okhttp3.ResponseBody.Companion.toResponseBody
+import java.security.MessageDigest
+import java.security.SecureRandom
+import java.util.Base64
 import java.util.Locale
+import javax.crypto.Cipher
+import javax.crypto.spec.GCMParameterSpec
+import javax.crypto.spec.SecretKeySpec
 
 class Hanime :
     AnimeHttpSource(),
@@ -66,16 +72,19 @@ class Hanime :
         .add("sec-ch-ua-mobile", "?0")
         .add("sec-ch-ua-platform", "\"Android\"")
 
+    /** Headers for HTML page requests (details, episode list). */
+    private val pageHeaders by lazy {
+        headers.newBuilder()
+            .set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+            .removeAll("content-type")
+            .build()
+    }
+
     /** Headers for video stream requests (m3u8, segments, AES key). */
     private fun videoHeaders(): Headers = headers.newBuilder()
-        .set("Referer", "https://player.hanime.tv/")
-        .set("Origin", "https://player.hanime.tv")
+        .set("Accept", "*/*")
+        .removeAll("content-type")
         .build()
-
-    @Volatile
-    private var authCookie: String? = null
-
-    private val playlistUtils by lazy { PlaylistUtils(client, headers) }
 
     private val preferences by getPreferencesLazy()
 
@@ -442,15 +451,17 @@ class Hanime :
 
     // ── Anime Details ──────────────────────────────────────────────────
 
+    override fun animeDetailsRequest(anime: SAnime): Request = GET(baseUrl + anime.url, pageHeaders)
+
     override fun animeDetailsParse(response: Response): SAnime {
         val document = response.useAsJsoup()
         return SAnime.create().apply {
-            title = getTitle(document.select("h1.tv-title").text())
-            thumbnail_url = document.selectFirst("img.hvpi-cover")?.attr("src")
-            author = document.selectFirst("a.hvpimbc-text")?.text() ?: ""
-            description = document.select("div.hvpist-description p").joinToString("\n\n") { it.text() }
+            title = getTitle(document.selectFirst("h1")?.text().orEmpty())
+            thumbnail_url = document.selectFirst("img[src*=/images/covers/]")?.attr("abs:src")
+            author = document.selectFirst("a[href^=/browse/brands/] strong")?.text().orEmpty()
+            description = document.select("div[data-expand-content] p").joinToString("\n\n") { it.text() }
             status = SAnime.UNKNOWN
-            genre = document.select("div.hvpis-text div.btn__content").joinToString { it.text() }
+            genre = document.select("a[href^=/browse/tags/]").joinToString { it.text() }
             initialized = true
             setUrlWithoutDomain(document.location())
         }
@@ -458,282 +469,109 @@ class Hanime :
 
     // ── Video List ─────────────────────────────────────────────────────
 
+    /**
+     * The player obtains its streams from an encrypted handshake: the request
+     * token and the `x-token` response header are AES-256-GCM blobs keyed with
+     * SHA-256 of a constant baked into the site's JS. The handshake needs the
+     * usual signature headers plus a CSRF token from [CSRF_TOKEN_URL].
+     */
     override suspend fun getVideoList(episode: SEpisode): List<Video> {
-        setAuthCookie()
-        return if (authCookie != null) {
-            fetchVideoListPremium(episode)
-        } else {
-            fetchVideoListWithSignature(episode)
-        }
-    }
-
-    /**
-     * Fetch video list using the manifest endpoint with WASM-generated signature headers.
-     *
-     * Flow:
-     * 1. Call /api/v8/video?id={slug} to get the numeric hvId
-     * 2. Call the guest manifest endpoint with signature headers for real stream URLs
-     * 3. Use PlaylistUtils to parse m3u8 playlists into properly-headed Video objects
-     * 4. Fall back to decoy streams from /api/v8/video if manifest fails
-     */
-    private suspend fun fetchVideoListWithSignature(episode: SEpisode): List<Video> {
-        // If hvid is embedded in the episode URL, skip the /api/v8/video call
-        val directHvId = extractHvIdFromUrl(episode.url)
-        if (directHvId != null) {
-            try {
-                val manifestStreams = fetchManifestVideos(directHvId, retryOnAuthFailure = true)
-                if (manifestStreams.isNotEmpty()) return manifestStreams
-            } catch (e: Exception) {
-                Log.w(TAG, "fetchVideoListWithSignature() — directHvId manifest failed: ${e.javaClass.simpleName}: ${e.message}")
-            }
-        }
-
-        // Fallback: resolve hvId via /api/v8/video (backward compatibility for single-episode URLs)
         val slug = extractSlugFromUrl(episode.url)
-
-        val videoString = client.newCall(GET("$baseUrl/api/v8/video?id=$slug", headers)).await()
-            .bodyString()
-        if (videoString.isEmpty()) return emptyList()
-
-        val videoModel = videoString.parseAs<VideoModel>()
-        val hvId = videoModel.hentaiVideo?.id
-            ?: videoModel.videosManifest?.servers?.firstOrNull()?.streams?.firstOrNull()?.hvId
-
-        if (hvId != null) {
-            try {
-                val manifestStreams = fetchManifestVideos(hvId, retryOnAuthFailure = true)
-                if (manifestStreams.isNotEmpty()) return manifestStreams
-            } catch (e: Exception) {
-                Log.w(TAG, "fetchVideoListWithSignature() — API hvId manifest failed: ${e.javaClass.simpleName}: ${e.message}")
-            }
-        }
-
-        // Final fallback: parse manifest streams from API response without guest filter
-        return parseVideoModelStreamsUnfiltered(videoModel)
-    }
-
-    /**
-     * Parse manifest streams from a VideoModel without the isGuestAllowed filter.
-     * Unlike [parseManifestStreams] which requires isGuestAllowed == true, this method
-     * includes all streams except premium_alert kinds, making it effective as a fallback
-     * when the CDN manifest endpoint fails (e.g. for non-premium multi-episode content).
-     */
-    private suspend fun parseVideoModelStreamsUnfiltered(videoModel: VideoModel): List<Video> {
-        // Note: Premium filter not applied here — fallback path intentionally includes all available streams for reliability
-        val servers = videoModel.videosManifest?.servers ?: return emptyList()
+        val sources = fetchHandshake(slug).sources
+            .filter { it.kind != "promotion" && it.src.isNotBlank() }
         val playerHeaders = videoHeaders()
-
-        return servers.parallelFlatMap { server ->
-            val filtered = server.streams.filter { it.kind != "premium_alert" && it.url.contains(".m3u8") }
-            filtered.parallelFlatMap { stream ->
-                try {
-                    playlistUtils.extractFromHls(
-                        playlistUrl = stream.url,
-                        masterHeaders = playerHeaders,
-                        videoHeaders = playerHeaders,
-                        videoNameGen = { quality ->
-                            val label = if (quality == "Video") "${stream.height ?: "unknown"}p" else quality
-                            "${server.name} - $label"
-                        },
-                    )
-                } catch (e: Exception) {
-                    Log.w(TAG, "Playlist extraction failed for server '${server.name}' stream ${stream.height ?: "unknown"}p: ${e.javaClass.simpleName}: ${e.message}")
-                    emptyList()
-                }
-            }
+        return sources.map { source ->
+            val url = if (source.src.startsWith("http")) source.src else baseUrl + source.src
+            Video(url, source.label ?: "${source.height ?: "unknown"}p", url, headers = playerHeaders)
         }
     }
 
-    /**
-     * Fetch video streams from the CDN manifest endpoint using signature authentication.
-     * When [retryOnAuthFailure] is true, a 401 response triggers escalating recovery:
-     * 1. Retry with a fresh signature (no cache, so every call is fresh)
-     * 2. If still 401, close and recreate the provider entirely, then retry
-     */
-    private suspend fun fetchManifestVideos(hvId: Long, retryOnAuthFailure: Boolean = false): List<Video> {
-        val manifestUrl = "$cdnBaseUrl/api/v8/guest/videos/$hvId/manifest"
-        val signature = ensureSignatureProvider().getSignature()
-        val sigHeaders = headers.newBuilder().apply {
-            SignatureHeaders.build(signature).forEach { (key, value) -> add(key, value) }
-        }.build()
+    private suspend fun fetchHandshake(slug: String): HandshakeData {
+        var csrf = getCsrfToken(forceRefresh = false)
+        repeat(2) { attempt ->
+            val payload = buildJsonObject {
+                put("timestamp_unix", System.currentTimeMillis() / 1000L)
+                put("directive", "htv_player_handshake")
+                put("slug", slug)
+            }.toString()
+            val body = buildJsonObject { put("token", HandshakeCrypto.encrypt(payload)) }
+                .toString().toRequestBody(JSON_MEDIA_TYPE)
 
-        var manifestResponseCode = 0
-        val result = client.newCall(
-            GET(manifestUrl, sigHeaders),
-        ).await().use { response ->
-            val contentType = response.body.contentType()
-            val bodyString = response.body.string()
-            manifestResponseCode = response.code
-            if (response.isSuccessful) {
-                response.newBuilder().body(bodyString.toResponseBody(contentType)).build().let { rebuilt ->
-                    parseManifestStreams(rebuilt)
-                }
-            } else {
-                val truncated = if (bodyString.length > 500) bodyString.take(500) + "..." else bodyString
-                Log.w(TAG, "fetchManifestVideos() — manifest non-2xx ($manifestResponseCode) body: $truncated")
-                emptyList()
-            }
-        }
-
-        if (result.isNotEmpty()) return result
-
-        if (manifestResponseCode == 401 && retryOnAuthFailure) {
-            // Retry with a fresh signature (no cache, so every call is fresh)
-            Log.d(TAG, "fetchManifestVideos() — 401 received, retrying with fresh signature")
-            val freshSignature = ensureSignatureProvider().getSignature()
-            val retryHeaders = headers.newBuilder().apply {
-                SignatureHeaders.build(freshSignature).forEach { (key, value) -> add(key, value) }
+            val signature = ensureSignatureProvider().getSignature()
+            val requestHeaders = headers.newBuilder().apply {
+                SignatureHeaders.build(signature).forEach { (key, value) -> set(key, value) }
+                set("x-csrf-token", csrf)
             }.build()
 
-            var retryResponseCode = 0
-            val retryResult = client.newCall(
-                GET(manifestUrl, retryHeaders),
-            ).await().use { response ->
-                val contentType = response.body.contentType()
-                val bodyString = response.body.string()
-                retryResponseCode = response.code
+            client.newCall(POST("$AUTHED_API_BASE_URL/api/v11/handshake", requestHeaders, body)).await().use { response ->
+                val responseBody = response.body.string()
                 if (response.isSuccessful) {
-                    response.newBuilder().body(bodyString.toResponseBody(contentType)).build().let { rebuilt ->
-                        parseManifestStreams(rebuilt)
-                    }
-                } else {
-                    val truncated = if (bodyString.length > 500) bodyString.take(500) + "..." else bodyString
-                    Log.w(TAG, "fetchManifestVideos() — retry non-2xx ($retryResponseCode) body: $truncated")
-                    emptyList()
+                    val token = response.header("x-token") ?: throw Exception("Handshake response had no stream token")
+                    return HandshakeCrypto.decrypt(token).parseAs<HandshakeData>()
                 }
-            }
-
-            if (retryResult.isNotEmpty()) return retryResult
-
-            // Second retry: the provider itself may be in a bad state — recreate it
-            if (retryResponseCode == 401) {
-                Log.w(TAG, "fetchManifestVideos() — 401 persists after fresh signature — recreating signature provider")
-                signatureProvider?.close()
-                signatureProvider = null
-                signatureProviderMode = null
-                try {
-                    val recreatedSignature = ensureSignatureProvider().getSignature()
-                    val recreatedHeaders = headers.newBuilder().apply {
-                        SignatureHeaders.build(recreatedSignature).forEach { (key, value) -> add(key, value) }
-                    }.build()
-
-                    return client.newCall(
-                        GET(manifestUrl, recreatedHeaders),
-                    ).await().use { response ->
-                        val contentType = response.body.contentType()
-                        val bodyString = response.body.string()
-                        val responseCode = response.code
-                        if (response.isSuccessful) {
-                            response.newBuilder().body(bodyString.toResponseBody(contentType)).build().let { rebuilt ->
-                                parseManifestStreams(rebuilt)
-                            }
-                        } else {
-                            if (responseCode == 401) {
-                                Log.e(TAG, "fetchManifestVideos() — 401 persists after provider recreation — giving up")
-                            } else {
-                                val truncated = if (bodyString.length > 500) bodyString.take(500) + "..." else bodyString
-                                Log.w(TAG, "fetchManifestVideos() — retry non-2xx ($responseCode) body: $truncated")
-                            }
-                            emptyList()
-                        }
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "fetchManifestVideos() — provider recreation failed: ${e.javaClass.simpleName}: ${e.message}", e)
+                if (attempt == 0 && "CSRF_ERROR" in responseBody) {
+                    csrf = getCsrfToken(forceRefresh = true)
+                    return@repeat
                 }
+                throw Exception("Handshake failed: HTTP ${response.code} ${responseBody.take(200)}")
             }
         }
-
-        return emptyList()
+        throw Exception("Handshake failed: CSRF token rejected")
     }
 
-    /**
-     * Parse the guest manifest response and extract HLS video streams.
-     * Uses PlaylistUtils.extractFromHls() to properly handle multi-quality
-     * m3u8 playlists and set correct headers for segment/AES key requests.
-     */
-    private suspend fun parseManifestStreams(response: Response): List<Video> {
-        val responseString = response.bodyString().ifEmpty { return emptyList() }
-        val manifestData = responseString.parseAs<ManifestWrapper>()
-        val playerHeaders = videoHeaders()
-        val servers = manifestData.videosManifest.servers
+    @Volatile
+    private var csrfToken: String? = null
 
-        return servers.parallelFlatMap { server ->
-            val includePremium = preferences.getBoolean(PREF_PREMIUM_STREAMS_KEY, PREF_PREMIUM_STREAMS_DEFAULT)
-            val guestStreams = server.streams.filter { (it.isGuestAllowed == true || (includePremium && it.isMemberAllowed == true)) && it.url.contains(".m3u8") }
-            guestStreams.parallelFlatMap { stream ->
-                runCatching {
-                    playlistUtils.extractFromHls(
-                        playlistUrl = stream.url,
-                        masterHeaders = playerHeaders,
-                        videoHeaders = playerHeaders,
-                        videoNameGen = { quality ->
-                            val label = if (quality == "Video") "${stream.height ?: "unknown"}p" else quality
-                            "${server.name} - $label"
-                        },
-                    )
-                }.getOrElse {
-                    // Fallback: create a single Video from the stream URL
-                    listOf(Video(stream.url, "${server.name} - ${stream.height ?: "unknown"}p", stream.url, headers = playerHeaders))
-                }
-            }
+    @Volatile
+    private var csrfTokenExpiresAt = 0L
+
+    private suspend fun getCsrfToken(forceRefresh: Boolean): String {
+        val cached = csrfToken
+        if (!forceRefresh && cached != null && System.currentTimeMillis() / 1000L < csrfTokenExpiresAt - 60) {
+            return cached
         }
+        val response = client.newCall(GET(CSRF_TOKEN_URL, headers)).await().bodyString().parseAs<CsrfTokenResponse>()
+        csrfToken = response.csrfToken
+        csrfTokenExpiresAt = response.csrfTokenExpiresAt ?: (System.currentTimeMillis() / 1000L + 600)
+        return response.csrfToken
     }
 
-    private suspend fun fetchVideoListPremium(episode: SEpisode): List<Video> {
-        val cookie = authCookie ?: return emptyList()
+    private object HandshakeCrypto {
+        private const val KEY_SEED = "htv-insecure-handshake-v1"
+        private const val AAD = "htv-insecure-v1"
+        private const val TAG_BYTES = 16
 
-        // If hvid is embedded in the episode URL, skip the HTML page parse
-        val directHvId = extractHvIdFromUrl(episode.url)
-        if (directHvId != null) {
-            try {
-                val manifestStreams = fetchManifestVideos(directHvId, retryOnAuthFailure = true)
-                if (manifestStreams.isNotEmpty()) return manifestStreams
-            } catch (_: Exception) {
-                // Fall through to HTML parsing below
-                Log.w(TAG, "fetchVideoListPremium() — directHvId manifest failed, falling back to HTML parsing")
+        private val key by lazy {
+            SecretKeySpec(MessageDigest.getInstance("SHA-256").digest(KEY_SEED.toByteArray()), "AES")
+        }
+        private val encoder = Base64.getUrlEncoder().withoutPadding()
+        private val decoder = Base64.getUrlDecoder()
+
+        fun encrypt(plaintext: String): String {
+            val iv = ByteArray(12).also { SecureRandom().nextBytes(it) }
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply {
+                init(Cipher.ENCRYPT_MODE, key, GCMParameterSpec(TAG_BYTES * 8, iv))
+                updateAAD(AAD.toByteArray())
             }
+            val sealed = cipher.doFinal(plaintext.toByteArray())
+            val envelope = buildJsonObject {
+                put("v", 1)
+                put("alg", "AES-256-GCM")
+                put("iv", encoder.encodeToString(iv))
+                put("tag", encoder.encodeToString(sealed.copyOfRange(sealed.size - TAG_BYTES, sealed.size)))
+                put("data", encoder.encodeToString(sealed.copyOfRange(0, sealed.size - TAG_BYTES)))
+            }.toString()
+            return encoder.encodeToString(envelope.toByteArray())
         }
 
-        // Fallback: resolve hvId from the HTML page (backward compatibility)
-        val slug = extractSlugFromUrl(episode.url)
-        val headers = headers.newBuilder().add("cookie", cookie)
-        val document = client.newCall(GET("$baseUrl/videos/hentai/$slug", headers = headers.build())).await().useAsJsoup()
-
-        val nuxtScript = document.selectFirst("script:containsData(__NUXT__)") ?: return emptyList()
-        val nuxtData = nuxtScript.data()
-            .substringAfter("__NUXT__=")
-            .substringBeforeLast(";")
-        val parsed = nuxtData.parseAs<WindowNuxt>()
-
-        // Try CDN guest manifest first — it has real Golem server streams (not Shiva decoys)
-        val hvId = parsed.state.data.video.hentaiVideo?.id
-        if (hvId != null) {
-            try {
-                val manifestStreams = fetchManifestVideos(hvId, retryOnAuthFailure = true)
-                if (manifestStreams.isNotEmpty()) return manifestStreams
-            } catch (_: Exception) {
-                // Fall through to __NUXT__ streams below
-                Log.w(TAG, "fetchVideoListPremium() — NUXT hvId manifest failed, falling back to NUXT streams")
+        fun decrypt(token: String): String {
+            val envelope = String(decoder.decode(token)).parseAs<HandshakeEnvelope>()
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply {
+                init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(TAG_BYTES * 8, decoder.decode(envelope.iv)))
+                updateAAD(AAD.toByteArray())
             }
+            return String(cipher.doFinal(decoder.decode(envelope.data) + decoder.decode(envelope.tag)))
         }
-
-        // Final fallback: parse manifest streams without guest filter
-        val nuxtVideoModel = VideoModel(
-            videosManifest = VideosManifest(
-                servers = parsed.state.data.video.videosManifest.servers.map { nuxtServer ->
-                    Server(
-                        name = nuxtServer.name,
-                        streams = nuxtServer.streams.map { nuxtStream ->
-                            Stream(
-                                height = nuxtStream.height,
-                                url = nuxtStream.url,
-                            )
-                        },
-                    )
-                },
-            ),
-        )
-        return parseVideoModelStreamsUnfiltered(nuxtVideoModel)
     }
 
     override fun List<Video>.sort(): List<Video> {
@@ -748,66 +586,50 @@ class Hanime :
 
     // ── Episode List ───────────────────────────────────────────────────
 
-    override fun episodeListRequest(anime: SAnime): Request {
-        val slug = anime.url.substringAfterLast("/")
-        return GET("$baseUrl/api/v8/video?id=$slug", headers)
-    }
+    override fun episodeListRequest(anime: SAnime): Request = GET("$baseUrl/videos/hentai/${anime.url.substringAfterLast("/")}", pageHeaders)
 
     override fun episodeListParse(response: Response): List<SEpisode> {
-        val responseString = response.bodyString().ifEmpty { return emptyList() }
-        val videoModel = responseString.parseAs<VideoModel>()
-
-        val currentSeriesName = getTitle(videoModel.hentaiVideo?.name ?: "")
-        val allFranchiseVideos = videoModel.hentaiFranchiseHentaiVideos ?: return emptyList()
+        val document = response.useAsJsoup()
+        val currentSlug = response.request.url.pathSegments.last()
+        val currentName = document.selectFirst("h1")?.text().orEmpty()
+        val currentSeriesName = getTitle(currentName)
         val titleFormat = preferences.getString(PREF_EP_TITLE_FORMAT_KEY, PREF_EP_TITLE_FORMAT_DEFAULT) ?: PREF_EP_TITLE_FORMAT_DEFAULT
+        val releaseDates = cachedSearchHits.orEmpty().associate { it.slug to it.releasedAtUnix }
 
-        val seriesVideos = allFranchiseVideos
-            .filter { getTitle(it.name ?: "") == currentSeriesName }
+        // The "More from <franchise>" section lists every video of the franchise, which can
+        // span several series; keep only the ones belonging to the series being viewed.
+        val franchise = document.select("h2")
+            .firstOrNull { it.text().startsWith("More from") }
+            ?.closest("section")
+            ?.select("[data-video-href][data-video-name]")
+            .orEmpty()
+            .map { FranchiseVideo(it.attr("data-video-href").substringAfterLast("/"), it.attr("data-video-name"), it.attr("data-video-id")) }
+            .distinctBy { it.slug }
+        val currentId = document.selectFirst("[data-video-slug=$currentSlug][data-video-id]")?.attr("data-video-id").orEmpty()
+        val seriesVideos = franchise.filter { getTitle(it.name) == currentSeriesName }
+            .ifEmpty { listOf(FranchiseVideo(currentSlug, currentName, currentId)) }
 
-        if (seriesVideos.isEmpty()) {
-            // No matching series found in franchise; return just the current video as a single episode
-            val currentVideo = videoModel.hentaiVideo ?: return emptyList()
-            return listOf(
-                SEpisode.create().apply {
-                    episode_number = 1f
-                    name = formatEpisodeTitle(currentVideo.name, currentSeriesName, 0, titleFormat)
-                    date_upload = (currentVideo.releasedAtUnix ?: 0) * 1000
-                    val hvidParam = currentVideo.id?.let { id -> "&hvid=$id" } ?: ""
-                    setUrlWithoutDomain("$baseUrl/api/v8/video?id=${currentVideo.slug}$hvidParam")
-                },
-            )
-        }
-
-        return seriesVideos.mapIndexed { idx, it ->
+        return seriesVideos.mapIndexed { idx, video ->
             SEpisode.create().apply {
                 episode_number = idx + 1f
-                name = formatEpisodeTitle(it.name, currentSeriesName, idx, titleFormat)
-                date_upload = (it.releasedAtUnix ?: 0) * 1000
-                val hvidParam = it.id?.let { id -> "&hvid=$id" } ?: ""
-                url = "$baseUrl/api/v8/video?id=${it.slug}$hvidParam"
+                name = formatEpisodeTitle(video.name, currentSeriesName, idx, titleFormat)
+                date_upload = (releaseDates[video.slug] ?: 0L) * 1000
+                // Kept in the pre-2026 API format so existing libraries keep their watch history.
+                val hvidParam = video.id.takeIf(String::isNotEmpty)?.let { "&hvid=$it" } ?: ""
+                url = "$baseUrl/api/v8/video?id=${video.slug}$hvidParam"
             }
         }.reversed()
     }
 
+    private class FranchiseVideo(val slug: String, val name: String, val id: String)
+
     // ── URL Helpers ───────────────────────────────────────────────────
 
-    /** Extract the `hvid` query parameter from an episode URL, or null if absent. */
-    private fun extractHvIdFromUrl(url: String): Long? {
-        val hvidParam = url.substringAfter("&hvid=", missingDelimiterValue = "").substringBefore("&")
-        return hvidParam.toLongOrNull()
-    }
-
-    /** Extract the slug (id query parameter) from an episode URL. */
-    private fun extractSlugFromUrl(url: String): String = url.substringAfter("id=").substringBefore("&")
-
-    // ── Auth ───────────────────────────────────────────────────────────
-
-    private fun setAuthCookie() {
-        if (authCookie == null) {
-            val cookieList = client.cookieJar.loadForRequest(baseUrl.toHttpUrl())
-            val sessionCookie = cookieList.firstOrNull { it.name == "htv3session" }
-            sessionCookie?.let { authCookie = "${it.name}=${it.value}" }
-        }
+    /** Extract the video slug from an episode URL (`…/api/v8/video?id=<slug>&hvid=…` or `…/videos/hentai/<slug>`). */
+    private fun extractSlugFromUrl(url: String): String = if ("id=" in url) {
+        url.substringAfter("id=").substringBefore("&")
+    } else {
+        url.substringAfterLast("/").substringBefore("?")
     }
 
     // ── Filters ────────────────────────────────────────────────────────
@@ -1129,6 +951,9 @@ class Hanime :
     companion object {
         private const val TAG = "Hanime"
         private const val DEFAULT_CDN_BASE_URL = "https://guest.freeanimehentai.net"
+        private const val AUTHED_API_BASE_URL = "https://auth.hanime.tv"
+        private const val CSRF_TOKEN_URL = "https://ct.hanime.tv/csrf-token"
+        private val JSON_MEDIA_TYPE = "application/json".toMediaType()
 
         private const val PREF_QUALITY_KEY = "preferred_quality"
         private const val PREF_QUALITY_DEFAULT = "1080p"
@@ -1141,9 +966,6 @@ class Hanime :
         private const val PREF_CENSORED_KEY = "censored_filter"
         private const val PREF_CENSORED_DEFAULT = "all"
         private val CENSORED_LIST = arrayOf("all", "uncensored", "censored")
-
-        private const val PREF_PREMIUM_STREAMS_KEY = "premium_streams"
-        private const val PREF_PREMIUM_STREAMS_DEFAULT = false
 
         private const val PREF_CACHE_TTL_KEY = "cache_duration"
         private const val PREF_CACHE_TTL_DEFAULT = "10"
@@ -1214,14 +1036,6 @@ class Hanime :
             entryValues = CENSORED_LIST.toList(),
             default = PREF_CENSORED_DEFAULT,
             summary = "%s",
-        )
-
-        // Premium Streams Toggle
-        screen.addSwitchPreference(
-            key = PREF_PREMIUM_STREAMS_KEY,
-            title = "Include premium streams",
-            summary = "Show streams that require a premium account. These will fail to play without a premium login cookie.",
-            default = PREF_PREMIUM_STREAMS_DEFAULT,
         )
 
         // Search Cache Duration
