@@ -188,14 +188,14 @@ class MoviesMod :
         // Parse the URL
         val parsedUrl = URL(mainUrl)
 
-        // Get query parameters
-        val queryParams = parsedUrl.query.split("&").associate {
-            val (key, value) = it.split("=")
-            key to value
+        // Get query parameters; links may now point directly to the episode page
+        val queryParams = parsedUrl.query.orEmpty().split("&").associate {
+            it.substringBefore("=") to it.substringAfter("=", "")
         }
+        val encodedUrl = queryParams["url"]?.takeIf(String::isNotBlank) ?: return mainUrl
 
         // Decode the Base64 string
-        val decodedUrl = String(Base64.decode(queryParams["url"], 1))
+        val decodedUrl = String(Base64.decode(encodedUrl, 1))
 
         return decodedUrl
     }
@@ -422,9 +422,9 @@ class MoviesMod :
     companion object {
         private val SIZE_REGEX = "\\[((?:.(?!\\[))+)]*\\$".toRegex(RegexOption.IGNORE_CASE)
 
-        private const val PREF_DOMAIN_KEY = "pref_domain_new"
+        private const val PREF_DOMAIN_KEY = "pref_domain_v2"
         private const val PREF_DOMAIN_TITLE = "Currently used domain"
-        private const val PREF_DOMAIN_DEFAULT = "https://moviesmod.red"
+        private const val PREF_DOMAIN_DEFAULT = "https://moviesmod.ai.in"
         private const val PREF_DOMAIN_DIALOG_TITLE = PREF_DOMAIN_TITLE
 
         private const val PREF_QUALITY_KEY = "preferred_quality"

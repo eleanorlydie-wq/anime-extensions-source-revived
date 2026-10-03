@@ -9,6 +9,20 @@ LOCAL_REPO: Path = REMOTE_REPO.parent.joinpath(sys.argv[2])
 
 to_delete: list[str] = json.loads(sys.argv[1])
 
+# Also purge anything published whose source module no longer exists. The prepare job diffs
+# against the last successful CI commit, but when that lookup falls back to the empty tree a
+# removed extension never appears in the diff, so it would otherwise stay in the repo forever.
+SOURCE_SRC: Path = LOCAL_REPO.parent.joinpath("src")
+PKG_PREFIX = "eu.kanade.tachiyomi.animeextension."
+if SOURCE_SRC.is_dir():
+    with REMOTE_REPO.joinpath("index.json").open() as published_file:
+        for item in json.load(published_file):
+            module = item["pkg"].removeprefix(PKG_PREFIX)
+            lang, _, name = module.partition(".")
+            if item["pkg"].startswith(PKG_PREFIX) and not SOURCE_SRC.joinpath(lang, name).is_dir():
+                print(f"pruning removed extension {module}")
+                to_delete.append(module)
+
 for module in to_delete:
     apk_name = f"aniyomi-{module}-v*.*.apk"
     icon_name = f"eu.kanade.tachiyomi.animeextension.{module}.png"

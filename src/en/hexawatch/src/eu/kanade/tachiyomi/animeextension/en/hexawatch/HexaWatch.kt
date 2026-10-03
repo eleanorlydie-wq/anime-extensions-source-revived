@@ -41,7 +41,7 @@ class HexaWatch :
 
     override val baseUrl = "https://hexa.su"
     private val animeUrl = "$baseUrl/details"
-    private val apiUrl = "https://themoviedb.hexa.su/api/tmdb"
+    private val apiUrl = "https://theemoviedb.hexa.su/api/tmdb"
     private val subtitleUrl = "https://sub.wyzie.ru"
     private val decryptionApiUrl = "https://enc-dec.app/api/dec-hexa"
 

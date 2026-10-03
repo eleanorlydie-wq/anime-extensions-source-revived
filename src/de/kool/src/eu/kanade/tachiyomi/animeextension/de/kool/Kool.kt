@@ -37,7 +37,7 @@ class Kool :
 
     override val name = "Kool"
 
-    override val baseUrl = "https://www.kool.to"
+    override val baseUrl = "https://kool.ws"
 
     override val lang = "de"
 

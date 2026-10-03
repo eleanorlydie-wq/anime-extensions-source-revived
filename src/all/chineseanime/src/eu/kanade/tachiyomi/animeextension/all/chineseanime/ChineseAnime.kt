@@ -15,7 +15,7 @@ class ChineseAnime :
     AnimeStream(
         "all",
         "ChineseAnime",
-        "https://www.chineseanime.vip",
+        "https://chineseanime.in",
     ) {
 
     // =============================== Search ===============================
