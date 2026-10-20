@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.animeextension.all.hentaitorrent
 
 import android.annotation.SuppressLint
+import android.app.Application
 import androidx.preference.PreferenceScreen
 import androidx.preference.SwitchPreferenceCompat
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
@@ -12,18 +13,25 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.ParsedAnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
+import eu.kanade.tachiyomi.network.await
 import eu.kanade.tachiyomi.network.awaitSuccess
 import eu.kanade.tachiyomi.torrentutils.TorrentUtils
 import eu.kanade.tachiyomi.util.asJsoup
 import keiyoushi.utils.getPreferencesLazy
+import keiyoushi.utils.parallelMap
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
 import okhttp3.Response
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
+import java.io.IOException
 import java.net.SocketTimeoutException
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
+import kotlin.coroutines.cancellation.CancellationException
 
 class HentaiTorrent :
     ParsedAnimeHttpSource(),
@@ -60,26 +68,99 @@ class HentaiTorrent :
 
     override suspend fun getPopularAnime(page: Int): AnimesPage = fetchListing(page, ::popularAnimeRequest)
 
-    // The tracker mixes videos with games, artwork and manga; a torrent without video files has
-    // no episodes, so those entries are dropped from listings (unless the user opts out).
-    private fun parseListing(response: Response): AnimesPage {
+    // The tracker mixes videos with games, artwork, manga and archives, and its labels are
+    // unreliable, so every entry is checked against its .torrent's file list and only posts that
+    // are mostly video are listed.
+    private suspend fun parseListing(response: Response): AnimesPage {
         val document = response.asJsoup()
         val cards = document.select(popularAnimeSelector())
-        val videoOnly = preferences.getBoolean(VIDEO_ONLY_KEY, VIDEO_ONLY_DEFAULT)
-        val animes = cards
-            .filterNot { videoOnly && it.isNonVideoEntry() }
-            .map(::popularAnimeFromElement)
+        val checked = cards
+            .filterNot { it.isNonVideoCatalog() }
+            .parallelMap { it to isVideoPost(it) }
+        saveVerdicts()
+        val animes = checked.filter { it.second }.map { popularAnimeFromElement(it.first) }
         // Catalog pages render an empty pagination block, so a full page is the only "more" signal.
         val hasNextPage = document.selectFirst(popularAnimeNextPageSelector()) != null || cards.size >= PAGE_SIZE
         return AnimesPage(animes, hasNextPage)
     }
 
-    private fun Element.isNonVideoEntry(): Boolean {
+    private fun Element.isNonVideoCatalog(): Boolean {
         val catalog = selectFirst("div.catalog")?.text().orEmpty()
-        if (NON_VIDEO_CATALOGS.any { catalog.contains(it, ignoreCase = true) }) return true
-        // Catalog labels are unreliable (image sets get filed under "3D video Hentai"), but the
-        // title carries a format tag such as [JPG] or [ART].
-        return NON_VIDEO_TAG.containsMatchIn(selectFirst("a.overlay")?.text().orEmpty())
+        return NON_VIDEO_CATALOGS.any { catalog.contains(it, ignoreCase = true) }
+    }
+
+    private fun Element.isNonVideoTitle(): Boolean = NON_VIDEO_TAG.containsMatchIn(selectFirst("a.overlay")?.text().orEmpty())
+
+    // Verdicts per post (slug), kept across sessions: a post's torrent doesn't change.
+    private val verdicts = ConcurrentHashMap<String, Boolean>()
+    private val newVerdicts = ConcurrentHashMap<String, Boolean>()
+    private val verdictPrefs by lazy {
+        Injekt.get<Application>().getSharedPreferences("source_${id}_verdicts", 0x0000)
+    }
+
+    private suspend fun isVideoPost(card: Element): Boolean {
+        val postUrl = card.selectFirst("a.overlay")?.attr("abs:href").orEmpty()
+        if (postUrl.isEmpty()) return false
+        val key = postUrl.substringAfterLast('/')
+        verdicts[key]?.let { return it }
+        if (verdictPrefs.contains(key)) {
+            return verdictPrefs.getBoolean(key, false).also { verdicts[key] = it }
+        }
+        // Network trouble: fall back to the title's format tag, and check again next time.
+        val verdict = try {
+            checkTorrent(card, postUrl)
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            return !card.isNonVideoTitle()
+        }
+        verdicts[key] = verdict
+        newVerdicts[key] = verdict
+        return verdict
+    }
+
+    private fun saveVerdicts() {
+        if (newVerdicts.isEmpty()) return
+        val pending = HashMap(newVerdicts)
+        newVerdicts.keys.removeAll(pending.keys)
+        val editor = verdictPrefs.edit()
+        if (verdictPrefs.all.size + pending.size > MAX_SAVED_VERDICTS) editor.clear()
+        pending.forEach { (key, value) -> editor.putBoolean(key, value) }
+        editor.apply()
+    }
+
+    /** Whether the post's torrent is mostly video. Dead and missing torrents count as not. */
+    private suspend fun checkTorrent(card: Element, postUrl: String): Boolean {
+        // Thumbnails are named after the torrent id (".../mini/202610/3313954_a1-500.jpg"),
+        // which saves the two page loads behind the download button.
+        val torrentId = THUMBNAIL_ID.find(card.selectFirst("img")?.attr("src").orEmpty())?.groupValues?.get(1)
+        val bytes = torrentId?.let { downloadTorrent(torrentUrl(it)) }
+            ?: resolveTorrentUrl(postUrl)?.let { downloadTorrent(it) }
+            ?: return false
+        val files = TorrentContents.parse(bytes)
+        val total = files.sumOf { it.size }
+        val video = files.filter { it.extension in validVideoExtensions }.sumOf { it.size }
+        return total > 0 && video * 2 >= total
+    }
+
+    private fun torrentUrl(torrentId: String) = "https://h.hentaitorrents.com/bt/%5Bhentaitorrents.com%5D.$torrentId.torrent"
+
+    /** Detail page -> download page -> .torrent link; null when the post has none. */
+    private suspend fun resolveTorrentUrl(postUrl: String): String? {
+        val downloadPageUrl = client.newCall(GET(postUrl, headers)).awaitSuccess().use { it.asJsoup() }
+            .selectFirst("div.download-container a.download-button")?.attr("abs:href")
+            .takeUnless { it.isNullOrEmpty() } ?: return null
+        return client.newCall(GET(downloadPageUrl, headers)).awaitSuccess().use { it.asJsoup() }
+            .selectFirst("a.download-button")?.attr("abs:href")
+            .takeUnless { it.isNullOrEmpty() }
+    }
+
+    /** The .torrent's bytes, or null when it's gone (404 or not a torrent). */
+    private suspend fun downloadTorrent(url: String): ByteArray? = client.newCall(GET(url, headers)).await().use { response ->
+        if (response.code == 404) return null
+        if (!response.isSuccessful) throw IOException("HTTP ${response.code}")
+        val source = response.body.source()
+        if (source.request(MAX_TORRENT_SIZE + 1)) throw IOException("Torrent file too large")
+        source.buffer.readByteArray().takeIf { it.isNotEmpty() && it[0] == 'd'.code.toByte() }
     }
 
     // An empty page reads as "no results" in the browse screen, so skip ahead (bounded) past
@@ -87,7 +168,7 @@ class HentaiTorrent :
     private suspend fun fetchListing(page: Int, request: (Int) -> Request): AnimesPage {
         var current = page
         while (true) {
-            val result = client.newCall(request(current)).awaitSuccess().use(::parseListing)
+            val result = client.newCall(request(current)).awaitSuccess().use { parseListing(it) }
             if (result.animes.isNotEmpty() || !result.hasNextPage || current - page >= MAX_PAGE_SKIP) {
                 return result
             }
@@ -205,7 +286,7 @@ class HentaiTorrent :
         return "This torrent has no video files$contents. It's probably a game, artwork or manga."
     }
 
-    private val validVideoExtensions = setOf("mp4", "mov", "avi", "wmv", "mkv", "flv", "webm", "mpeg", "mpg", "mts", "vob", "ts")
+    private val validVideoExtensions = setOf("mp4", "m4v", "mov", "avi", "wmv", "mkv", "flv", "webm", "mpeg", "mpg", "mts", "m2ts", "vob", "ts")
 
     @SuppressLint("DefaultLocale")
     private fun convertBytesToReadable(bytes: Long): String {
@@ -244,13 +325,6 @@ class HentaiTorrent :
     override fun videoUrlParse(document: Document) = throw Exception("Not used")
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
-        SwitchPreferenceCompat(screen.context).apply {
-            key = VIDEO_ONLY_KEY
-            title = "Only show video torrents"
-            setDefaultValue(VIDEO_ONLY_DEFAULT)
-            summary = "Hide games, artwork and manga, which have no playable episodes."
-        }.also(screen::addPreference)
-
         SwitchPreferenceCompat(screen.context).apply {
             key = IS_FILENAME_KEY
             title = "Only display filename"
@@ -306,8 +380,10 @@ class HentaiTorrent :
         private const val PAGE_SIZE = 60
         private const val MAX_PAGE_SKIP = 5
 
-        private const val VIDEO_ONLY_KEY = "video_only"
-        private const val VIDEO_ONLY_DEFAULT = true
+        private const val MAX_SAVED_VERDICTS = 4000
+        private const val MAX_TORRENT_SIZE = 16L * 1024 * 1024
+
+        private val THUMBNAIL_ID = Regex("""/mini/\d+/(\d+)[a-z]?(?:_a\d+)?-\d+\.\w+$""")
 
         private val NON_VIDEO_CATALOGS = listOf("Game", "Artwork", "Comics", "Manga", "Software")
 
