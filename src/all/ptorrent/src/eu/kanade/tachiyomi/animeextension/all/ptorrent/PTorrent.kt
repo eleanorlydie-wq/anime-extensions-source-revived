@@ -69,41 +69,37 @@ class PTorrent :
 
     // =============================== Search ===============================
     override suspend fun getSearchAnime(page: Int, query: String, filters: AnimeFilterList): AnimesPage {
-        if (query.startsWith("https://")) {
-            val url = query.toHttpUrl()
-            if (url.host != baseUrl.toHttpUrl().host) {
+        // Open a shared/deep-linked detail URL directly. Detail pages are top-level
+        // slugs (e.g. /some-title-589736.html), so the page IS the anime.
+        val url = query.removePrefix(PREFIX_SEARCH)
+        if (url.startsWith("https://")) {
+            if (url.toHttpUrl().host != baseUrl.toHttpUrl().host) {
                 throw Exception("Unsupported url")
             }
-            val id = url.pathSegments.getOrNull(1)
-                ?: throw Exception("Unsupported url")
-            return getSearchAnime(page, "${PREFIX_SEARCH}$id", filters)
-        }
-
-        if (query.startsWith(PREFIX_SEARCH)) {
-            val id = query.removePrefix(PREFIX_SEARCH)
-            return client.newCall(GET("$baseUrl/anime/$id"))
+            return client.newCall(GET(url))
                 .awaitSuccess()
-                .use(::searchAnimeByIdParse)
+                .use(::searchAnimeByUrlParse)
         }
-
         return super.getSearchAnime(page, query, filters)
     }
 
-    private fun searchAnimeByIdParse(response: Response): AnimesPage {
-        val details = animeDetailsParse(response.use { it.asJsoup() })
-        return AnimesPage(listOf(details), false)
+    private fun searchAnimeByUrlParse(response: Response): AnimesPage {
+        val anime = animeDetailsParse(response.asJsoup()).apply {
+            setUrlWithoutDomain(response.request.url.toString())
+        }
+        return AnimesPage(listOf(anime), false)
     }
 
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
         val encodedQuery = query.replace(" ", "+")
-        val cat = filters.firstNotNullOfOrNull { filter ->
-            if (filter is CategoriesList) getCategory()[filter.state].id else 0
-        }.toString()
+        val cat = filters.filterIsInstance<CategoriesList>().firstOrNull()
+            ?.let { getCategory()[it.state].id }
 
-        return if (query.isNotEmpty()) {
-            GET("$baseUrl/s.php?search=$encodedQuery&page=$page")
-        } else {
-            GET("$baseUrl/catalog/$cat/page/$page")
+        return when {
+            query.isNotEmpty() -> GET("$baseUrl/s.php?search=$encodedQuery&page=$page")
+            // "Home" has no catalog page (/catalog/0 is empty); it's the front page listing.
+            cat == null || cat == "0" -> popularAnimeRequest(page)
+            else -> GET("$baseUrl/catalog/$cat/page/$page")
         }
     }
 
@@ -113,9 +109,19 @@ class PTorrent :
 
     override fun searchAnimeNextPageSelector() = popularAnimeNextPageSelector()
 
+    // Catalog pages render an empty pagination block, so a full page is the only "more" signal.
+    override fun searchAnimeParse(response: Response): AnimesPage {
+        val document = response.asJsoup()
+        val cards = document.select(searchAnimeSelector())
+        val hasNextPage = document.selectFirst(searchAnimeNextPageSelector()) != null || cards.size >= PAGE_SIZE
+        return AnimesPage(cards.map(::searchAnimeFromElement), hasNextPage)
+    }
+
     // =========================== Anime Details ============================
     override fun animeDetailsParse(document: Document): SAnime {
         val anime = SAnime.create()
+        // Set only when found so the browse flow's title/thumbnail (from the listing) are never blanked.
+        document.selectFirst("h1")?.text()?.trim()?.let { anime.title = it }
         anime.description = document.select("div.article-content").html().replace(Regex("<(?!br\\s*/?)[^>]+>"), "").replace("<br>", "\n").replace("<br/>", "\n")
         return anime
     }
@@ -125,20 +131,24 @@ class PTorrent :
 
     override fun episodeListParse(response: Response): List<SEpisode> {
         val document = response.asJsoup()
-        val downloadButtonUrl = document.select("div.download-container a.download-button").attr("href")
-        val downloadPage = client.newCall(GET("$baseUrl$downloadButtonUrl")).execute().asJsoup()
-        val torrentFileUrl = downloadPage.select("a.download-button").attr("href")
+        val downloadButtonUrl = document.selectFirst("div.download-container a.download-button")?.attr("abs:href")
+            .takeUnless { it.isNullOrEmpty() } ?: throw Exception("No Torrent Found!")
+        val downloadPage = client.newCall(GET(downloadButtonUrl, headers)).execute().use { it.asJsoup() }
+        val torrentFileUrl = downloadPage.selectFirst("a.download-button")?.attr("abs:href")
 
-        if (torrentFileUrl.isEmpty()) throw Exception("No Torrent Found!")
+        if (torrentFileUrl.isNullOrEmpty()) throw Exception("No Torrent Found!")
 
         return try {
             val torrent = TorrentUtils.getTorrentInfo(torrentFileUrl, "torrent")
-            val torrentMagnetLink = "magnet:?xt=urn:btih:${torrent.hash}&dn=${torrent.hash}"
-            var torrentTrackers = fetchTrackers().split("\n").filter { it.isNotBlank() }.joinToString("&tr=", "&tr=")
-            torrentTrackers += torrent.trackers.filter { it.isNotBlank() }.joinToString("&tr=", "&tr=")
-            var episodeNumber = 1F
-            torrent.files
+            val videoFiles = torrent.files
                 .filter { it.path.substringAfterLast('.').lowercase(Locale.ROOT) in validVideoExtensions }
+            if (videoFiles.isEmpty()) throw Exception(noVideoMessage(torrent.files.map { it.path }))
+
+            val torrentMagnetLink = "magnet:?xt=urn:btih:${torrent.hash}&dn=${torrent.hash}"
+            val trackers = (fetchTrackers() + torrent.trackers).filter { it.isNotBlank() }.distinct()
+            val torrentTrackers = trackers.joinToString("") { "&tr=$it" }
+            var episodeNumber = 1F
+            videoFiles
                 .map { file ->
                     SEpisode.create().apply {
                         name = if (preferences.getBoolean(IS_FILENAME_KEY, IS_FILENAME_DEFAULT)) {
@@ -156,6 +166,15 @@ class PTorrent :
         }
     }
 
+    private fun noVideoMessage(paths: List<String>): String {
+        val kinds = paths.map { it.substringAfterLast('/').substringAfterLast('.', "").lowercase(Locale.ROOT) }
+            .filter { it.length in 1..4 }
+            .distinct()
+            .take(5)
+        val contents = if (kinds.isEmpty()) "" else " (it contains ${kinds.joinToString()} files)"
+        return "This torrent has no video files$contents. It's probably a picture gallery or a game."
+    }
+
     private val validVideoExtensions = setOf("mp4", "mov", "avi", "wmv", "mkv", "flv", "webm", "mpeg", "mpg", "mts", "vob", "ts")
 
     @SuppressLint("DefaultLocale")
@@ -171,16 +190,16 @@ class PTorrent :
         }
     }
 
-    private fun fetchTrackers(): String {
+    // Extra public trackers help find peers; the torrent's own trackers are enough without them.
+    private fun fetchTrackers(): List<String> = runCatching {
         val request = Request.Builder()
             .url("https://raw.githubusercontent.com/ngosang/trackerslist/refs/heads/master/trackers_all_http.txt")
             .build()
-
         client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) throw Exception("Unexpected code $response")
-            return response.body.string().trim()
+            if (!response.isSuccessful) return emptyList()
+            response.body.string().lines().map(String::trim)
         }
-    }
+    }.getOrDefault(emptyList())
 
     override fun episodeFromElement(element: Element) = throw Exception("Not used")
 
@@ -241,6 +260,8 @@ class PTorrent :
 
     companion object {
         const val PREFIX_SEARCH = "id:"
+
+        private const val PAGE_SIZE = 60
 
         private const val IS_FILENAME_KEY = "filename"
         private const val IS_FILENAME_DEFAULT = false

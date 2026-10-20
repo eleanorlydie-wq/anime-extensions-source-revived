@@ -58,6 +58,43 @@ class HentaiTorrent :
 
     override fun popularAnimeNextPageSelector(): String = "div.pagination a:contains(Next)"
 
+    override suspend fun getPopularAnime(page: Int): AnimesPage = fetchListing(page, ::popularAnimeRequest)
+
+    // The tracker mixes videos with games, artwork and manga; a torrent without video files has
+    // no episodes, so those entries are dropped from listings (unless the user opts out).
+    private fun parseListing(response: Response): AnimesPage {
+        val document = response.asJsoup()
+        val cards = document.select(popularAnimeSelector())
+        val videoOnly = preferences.getBoolean(VIDEO_ONLY_KEY, VIDEO_ONLY_DEFAULT)
+        val animes = cards
+            .filterNot { videoOnly && it.isNonVideoEntry() }
+            .map(::popularAnimeFromElement)
+        // Catalog pages render an empty pagination block, so a full page is the only "more" signal.
+        val hasNextPage = document.selectFirst(popularAnimeNextPageSelector()) != null || cards.size >= PAGE_SIZE
+        return AnimesPage(animes, hasNextPage)
+    }
+
+    private fun Element.isNonVideoEntry(): Boolean {
+        val catalog = selectFirst("div.catalog")?.text().orEmpty()
+        if (NON_VIDEO_CATALOGS.any { catalog.contains(it, ignoreCase = true) }) return true
+        // Catalog labels are unreliable (image sets get filed under "3D video Hentai"), but the
+        // title carries a format tag such as [JPG] or [ART].
+        return NON_VIDEO_TAG.containsMatchIn(selectFirst("a.overlay")?.text().orEmpty())
+    }
+
+    // An empty page reads as "no results" in the browse screen, so skip ahead (bounded) past
+    // pages whose entries were all filtered out.
+    private suspend fun fetchListing(page: Int, request: (Int) -> Request): AnimesPage {
+        var current = page
+        while (true) {
+            val result = client.newCall(request(current)).awaitSuccess().use(::parseListing)
+            if (result.animes.isNotEmpty() || !result.hasNextPage || current - page >= MAX_PAGE_SKIP) {
+                return result
+            }
+            current++
+        }
+    }
+
     // =============================== Latest ===============================
     override fun latestUpdatesRequest(page: Int): Request = throw UnsupportedOperationException()
 
@@ -80,7 +117,7 @@ class HentaiTorrent :
                 .awaitSuccess()
                 .use(::searchAnimeByUrlParse)
         }
-        return super.getSearchAnime(page, query, filters)
+        return fetchListing(page) { searchAnimeRequest(it, query, filters) }
     }
 
     private fun searchAnimeByUrlParse(response: Response): AnimesPage {
@@ -92,14 +129,14 @@ class HentaiTorrent :
 
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
         val encodedQuery = query.replace(" ", "+")
-        val cat = filters.firstNotNullOfOrNull { filter ->
-            if (filter is CategoriesList) getCategory()[filter.state].id else 0
-        }.toString()
+        val cat = filters.filterIsInstance<CategoriesList>().firstOrNull()
+            ?.let { getCategory()[it.state].id }
 
-        return if (query.isNotEmpty()) {
-            GET("$baseUrl/s.php?search=$encodedQuery&page=$page")
-        } else {
-            GET("$baseUrl/catalog/$cat/page/$page")
+        return when {
+            query.isNotEmpty() -> GET("$baseUrl/s.php?search=$encodedQuery&page=$page")
+            // "Home" has no catalog page (/catalog/0 is empty); it's the front page listing.
+            cat == null || cat == "0" -> popularAnimeRequest(page)
+            else -> GET("$baseUrl/catalog/$cat/page/$page")
         }
     }
 
@@ -124,20 +161,24 @@ class HentaiTorrent :
 
     override fun episodeListParse(response: Response): List<SEpisode> {
         val document = response.asJsoup()
-        val downloadButtonUrl = document.select("div.download-container a.download-button").attr("href")
-        val downloadPage = client.newCall(GET("$baseUrl$downloadButtonUrl")).execute().asJsoup()
-        val torrentFileUrl = downloadPage.select("a.download-button").attr("href")
+        val downloadButtonUrl = document.selectFirst("div.download-container a.download-button")?.attr("abs:href")
+            .takeUnless { it.isNullOrEmpty() } ?: throw Exception("No Torrent Found!")
+        val downloadPage = client.newCall(GET(downloadButtonUrl, headers)).execute().use { it.asJsoup() }
+        val torrentFileUrl = downloadPage.selectFirst("a.download-button")?.attr("abs:href")
 
-        if (torrentFileUrl.isEmpty()) throw Exception("No Torrent Found!")
+        if (torrentFileUrl.isNullOrEmpty()) throw Exception("No Torrent Found!")
 
         return try {
             val torrent = TorrentUtils.getTorrentInfo(torrentFileUrl, "torrent")
-            val torrentMagnetLink = "magnet:?xt=urn:btih:${torrent.hash}&dn=${torrent.hash}"
-            var torrentTrackers = fetchTrackers().split("\n").filter { it.isNotBlank() }.joinToString("&tr=", "&tr=")
-            torrentTrackers += torrent.trackers.filter { it.isNotBlank() }.joinToString("&tr=", "&tr=")
-            var episodeNumber = 1F
-            torrent.files
+            val videoFiles = torrent.files
                 .filter { it.path.substringAfterLast('.').lowercase(Locale.ROOT) in validVideoExtensions }
+            if (videoFiles.isEmpty()) throw Exception(noVideoMessage(torrent.files.map { it.path }))
+
+            val torrentMagnetLink = "magnet:?xt=urn:btih:${torrent.hash}&dn=${torrent.hash}"
+            val trackers = (fetchTrackers() + torrent.trackers).filter { it.isNotBlank() }.distinct()
+            val torrentTrackers = trackers.joinToString("") { "&tr=$it" }
+            var episodeNumber = 1F
+            videoFiles
                 .map { file ->
                     SEpisode.create().apply {
                         name = if (preferences.getBoolean(IS_FILENAME_KEY, IS_FILENAME_DEFAULT)) {
@@ -155,6 +196,15 @@ class HentaiTorrent :
         }
     }
 
+    private fun noVideoMessage(paths: List<String>): String {
+        val kinds = paths.map { it.substringAfterLast('/').substringAfterLast('.', "").lowercase(Locale.ROOT) }
+            .filter { it.length in 1..4 }
+            .distinct()
+            .take(5)
+        val contents = if (kinds.isEmpty()) "" else " (it contains ${kinds.joinToString()} files)"
+        return "This torrent has no video files$contents. It's probably a game, artwork or manga."
+    }
+
     private val validVideoExtensions = setOf("mp4", "mov", "avi", "wmv", "mkv", "flv", "webm", "mpeg", "mpg", "mts", "vob", "ts")
 
     @SuppressLint("DefaultLocale")
@@ -170,16 +220,16 @@ class HentaiTorrent :
         }
     }
 
-    private fun fetchTrackers(): String {
+    // Extra public trackers help find peers; the torrent's own trackers are enough without them.
+    private fun fetchTrackers(): List<String> = runCatching {
         val request = Request.Builder()
             .url("https://raw.githubusercontent.com/ngosang/trackerslist/refs/heads/master/trackers_all_http.txt")
             .build()
-
         client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) throw Exception("Unexpected code $response")
-            return response.body.string().trim()
+            if (!response.isSuccessful) return emptyList()
+            response.body.string().lines().map(String::trim)
         }
-    }
+    }.getOrDefault(emptyList())
 
     override fun episodeFromElement(element: Element) = throw Exception("Not used")
 
@@ -194,6 +244,13 @@ class HentaiTorrent :
     override fun videoUrlParse(document: Document) = throw Exception("Not used")
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
+        SwitchPreferenceCompat(screen.context).apply {
+            key = VIDEO_ONLY_KEY
+            title = "Only show video torrents"
+            setDefaultValue(VIDEO_ONLY_DEFAULT)
+            summary = "Hide games, artwork and manga, which have no playable episodes."
+        }.also(screen::addPreference)
+
         SwitchPreferenceCompat(screen.context).apply {
             key = IS_FILENAME_KEY
             title = "Only display filename"
@@ -245,6 +302,17 @@ class HentaiTorrent :
 
     companion object {
         const val PREFIX_SEARCH = "id:"
+
+        private const val PAGE_SIZE = 60
+        private const val MAX_PAGE_SKIP = 5
+
+        private const val VIDEO_ONLY_KEY = "video_only"
+        private const val VIDEO_ONLY_DEFAULT = true
+
+        private val NON_VIDEO_CATALOGS = listOf("Game", "Artwork", "Comics", "Manga", "Software")
+
+        // Upper-case format tags only, so genre lists ("[Full Color, Art Style, …]") don't match.
+        private val NON_VIDEO_TAG = Regex("""\[(?:[^\]]*[ ,])?(?:ART|JPE?G|PNG|GIF)(?:[ ,][^\]]*)?]""")
 
         private const val IS_FILENAME_KEY = "filename"
         private const val IS_FILENAME_DEFAULT = false

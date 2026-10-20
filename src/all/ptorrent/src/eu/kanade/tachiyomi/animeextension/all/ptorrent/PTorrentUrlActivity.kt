@@ -8,7 +8,7 @@ import android.util.Log
 import kotlin.system.exitProcess
 
 /**
- * Springboard that accepts https://nyaa.si/anime/<item> intents
+ * Springboard that accepts https://(www.)ptorrents.com/<slug>.html intents
  * and redirects them to the main Aniyomi process.
  */
 class PTorrentUrlActivity : Activity() {
