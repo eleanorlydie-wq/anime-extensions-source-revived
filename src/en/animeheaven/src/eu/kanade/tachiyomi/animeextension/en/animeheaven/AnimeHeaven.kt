@@ -82,8 +82,14 @@ class AnimeHeaven : AnimeHttpSource() {
         }
     }
 
-    override fun episodeListParse(response: Response): List<SEpisode> = response.useAsJsoup()
-        .select("a[onclick^=gatea]").mapNotNull { link ->
+    override fun episodeListParse(response: Response): List<SEpisode> {
+        val document = response.useAsJsoup()
+        // Hard content block, deliberately not configurable. The site has no tag for sexualised minors, so
+        // every title with sexual-content tags is refused.
+        if (document.select(".infotags a").any { it.text().lowercase() in BLOCKED_TAGS }) {
+            throw Exception("This title is blocked by the extension")
+        }
+        return document.select("a[onclick^=gatea]").mapNotNull { link ->
             val key = link.id().takeIf(String::isNotEmpty) ?: return@mapNotNull null
             val number = link.selectFirst(".watch2")?.text().orEmpty()
             SEpisode.create().apply {
@@ -92,6 +98,7 @@ class AnimeHeaven : AnimeHttpSource() {
                 episode_number = number.toFloatOrNull() ?: -1f
             }
         }
+    }
 
     // gate.php picks the episode from the "key" cookie that the site's own gatea() sets on click.
     override fun videoListRequest(episode: SEpisode): Request {
@@ -114,8 +121,13 @@ class AnimeHeaven : AnimeHttpSource() {
     }
 
     companion object {
+        private val BLOCKED_TAGS = setOf(
+            "based on an eroge", "borderline h", "ecchi", "explicit sex", "hentai", "loli", "lolicon", "nudity",
+            "panty shots", "sexual abuse", "shota", "shotacon",
+        )
+
         private val TAGS = arrayOf(
-            "<Select>", "Action", "Adventure", "Comedy", "Drama", "Ecchi", "Fantasy", "Harem", "Historical",
+            "<Select>", "Action", "Adventure", "Comedy", "Drama", "Fantasy", "Harem", "Historical",
             "Horror", "Isekai", "Josei", "Magic", "Martial Arts", "Mecha", "Military", "Music", "Mystery",
             "Parody", "Psychological", "Romance", "School Life", "Sci Fi", "Seinen", "Shoujo", "Shounen",
             "Slice Of Life", "Sports", "Superpowers", "Supernatural", "Thriller", "Vampires",
