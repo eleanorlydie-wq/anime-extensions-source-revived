@@ -10,6 +10,7 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
+import eu.kanade.tachiyomi.network.awaitSuccess
 import eu.kanade.tachiyomi.util.asJsoup
 import keiyoushi.utils.addEditTextPreference
 import keiyoushi.utils.addListPreference
@@ -21,6 +22,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
 import okhttp3.Response
 import java.text.SimpleDateFormat
@@ -36,7 +38,7 @@ class Subsplease :
 
     override val lang = "all"
 
-    override val supportsLatest = false
+    override val supportsLatest = true
 
     private val preferences by getPreferencesLazy()
 
@@ -175,31 +177,53 @@ class Subsplease :
 
     // Search
 
-    override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request = GET("$baseUrl/api/?f=search&tz=Europe/Berlin&s=$query")
-
-    override fun searchAnimeParse(response: Response): AnimesPage {
-        val responseString = response.body.string()
-        return parseSearchAnimeJson(responseString)
+    override suspend fun getSearchAnime(page: Int, query: String, filters: AnimeFilterList): AnimesPage {
+        val slug = query.takeIf { it.startsWith("$baseUrl/shows/") }
+            ?.toHttpUrl()?.pathSegments?.getOrNull(1)
+            ?: return super.getSearchAnime(page, query, filters)
+        val path = "/shows/$slug/"
+        return client.newCall(GET("$baseUrl$path")).awaitSuccess().use { response ->
+            val document = response.asJsoup()
+            val anime = SAnime.create().apply {
+                title = document.selectFirst("h1.entry-title")?.text() ?: slug
+                setUrlWithoutDomain("$baseUrl$path")
+                thumbnail_url = document.selectFirst("img.img-responsive.img-center")?.absUrl("src")
+                description = document.select("div.series-syn p").text()
+            }
+            AnimesPage(listOf(anime), hasNextPage = false)
+        }
     }
 
-    private fun parseSearchAnimeJson(jsonLine: String?): AnimesPage {
-        val jsonData = jsonLine ?: return AnimesPage(emptyList(), false)
-        val jObject = json.decodeFromString<JsonObject>(jsonData)
-        val jE = jObject.entries
-        val animeList = jE.mapNotNull {
-            val itJ = it.value.jsonObject
-            val title = itJ.jsonObject["show"]?.jsonPrimitive?.content
-            val page = itJ.jsonObject["page"]?.jsonPrimitive?.content
-            if (title == null || page == null) return@mapNotNull null
+    override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
+        val url = "$baseUrl/api/".toHttpUrl().newBuilder()
+            .addQueryParameter("f", "search")
+            .addQueryParameter("tz", "Europe/Berlin")
+            .addQueryParameter("s", query)
+            .build()
+        return GET(url)
+    }
 
-            SAnime.create().apply {
-                this.title = title
-                setUrlWithoutDomain("$baseUrl/shows/$page")
-                itJ.jsonObject["image_url"]?.jsonPrimitive?.content?.let {
-                    thumbnail_url = "$baseUrl$it"
+    override fun searchAnimeParse(response: Response): AnimesPage = parseReleaseList(response.body.string())
+
+    /** Search and latest both return one entry per release, keyed by "Show - episode", or `[]` when there are none. */
+    private fun parseReleaseList(jsonData: String): AnimesPage {
+        val releases = json.parseToJsonElement(jsonData) as? JsonObject
+            ?: return AnimesPage(emptyList(), false)
+        val animeList = releases.values
+            .mapNotNull { release ->
+                val item = release.jsonObject
+                val title = item["show"]?.jsonPrimitive?.content ?: return@mapNotNull null
+                val page = item["page"]?.jsonPrimitive?.content ?: return@mapNotNull null
+
+                SAnime.create().apply {
+                    this.title = title
+                    setUrlWithoutDomain("$baseUrl/shows/$page")
+                    item["image_url"]?.jsonPrimitive?.content?.let {
+                        thumbnail_url = "$baseUrl$it"
+                    }
                 }
             }
-        }
+            .distinctBy { it.url }
         return AnimesPage(animeList, hasNextPage = false)
     }
 
@@ -214,9 +238,9 @@ class Subsplease :
 
     // Latest
 
-    override fun latestUpdatesParse(response: Response): AnimesPage = throw UnsupportedOperationException("Not used")
+    override fun latestUpdatesRequest(page: Int): Request = GET("$baseUrl/api/?f=latest&tz=Europe/Berlin")
 
-    override fun latestUpdatesRequest(page: Int): Request = throw UnsupportedOperationException("Not used")
+    override fun latestUpdatesParse(response: Response): AnimesPage = parseReleaseList(response.body.string())
 
     // Preferences
 

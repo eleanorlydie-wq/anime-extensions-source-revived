@@ -14,7 +14,7 @@
 
                 <data
                     android:host="subsplease.org"
-                    android:pathPattern="/anime/..*"
+                    android:pathPattern="/shows/..*"
                     android:scheme="https" />
             </intent-filter>
         </activity>
