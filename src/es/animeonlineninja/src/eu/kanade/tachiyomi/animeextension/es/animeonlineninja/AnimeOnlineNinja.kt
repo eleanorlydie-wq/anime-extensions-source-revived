@@ -29,7 +29,7 @@ class AnimeOnlineNinja :
     DooPlay(
         "es",
         "AnimeOnline.Ninja",
-        "https://ver.animeonline.ninja",
+        "https://ver2.animeonline.ninja",
     ) {
     override val client by lazy {
         if (preferences.getBoolean(PREF_VRF_INTERCEPT_KEY, PREF_VRF_INTERCEPT_DEFAULT)) {
