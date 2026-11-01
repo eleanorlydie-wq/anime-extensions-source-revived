@@ -6,18 +6,26 @@ import aniyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
+import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
-import eu.kanade.tachiyomi.animesource.online.ParsedAnimeHttpSource
+import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.util.asJsoup
 import keiyoushi.utils.getPreferencesLazy
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
-import okhttp3.FormBody
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
@@ -25,13 +33,12 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import org.jsoup.nodes.Document
-import org.jsoup.nodes.Element
 import uy.kohesive.injekt.injectLazy
 import java.text.SimpleDateFormat
 import java.util.Locale
 
 class Aniweek :
-    ParsedAnimeHttpSource(),
+    AnimeHttpSource(),
     ConfigurableAnimeSource {
 
     override val name = "Aniweek"
@@ -40,7 +47,7 @@ class Aniweek :
 
     override val lang = "ko"
 
-    override val supportsLatest = false
+    override val supportsLatest = true
 
     private val json: Json by injectLazy()
 
@@ -48,204 +55,118 @@ class Aniweek :
 
     // ============================== Popular ===============================
 
-    override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/bbs/board.php?bo_table=ing")
+    override fun popularAnimeRequest(page: Int): Request = boardRequest(BOARD_ENDED, page)
 
-    override fun popularAnimeSelector(): String = "div.list-board > div.list-body > div.list-row"
-
-    override fun popularAnimeFromElement(element: Element): SAnime {
-        val thumbnailUrl = element.selectFirst("img")!!.attr("src")
-
-        return SAnime.create().apply {
-            setUrlWithoutDomain(element.selectFirst("a")!!.attr("href"))
-            thumbnail_url = if (thumbnailUrl.startsWith("..")) {
-                baseUrl + thumbnailUrl.substringAfter("..")
-            } else {
-                thumbnailUrl
-            }
-            title = element.selectFirst("div.post-title")!!.text()
-        }
-    }
-
-    override fun popularAnimeNextPageSelector(): String = "ul.pagination > li.active ~ li:not(.disabled):matches(.)"
+    override fun popularAnimeParse(response: Response): AnimesPage = boardParse(response)
 
     // =============================== Latest ===============================
 
-    override fun latestUpdatesRequest(page: Int): Request = throw UnsupportedOperationException()
+    override fun latestUpdatesRequest(page: Int): Request = boardRequest(BOARD_AIRING, page)
 
-    override fun latestUpdatesSelector(): String = throw UnsupportedOperationException()
-
-    override fun latestUpdatesFromElement(element: Element): SAnime = throw UnsupportedOperationException()
-
-    override fun latestUpdatesNextPageSelector(): String = throw UnsupportedOperationException()
+    override fun latestUpdatesParse(response: Response): AnimesPage = boardParse(response)
 
     // =============================== Search ===============================
 
-    // 원피스
-
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
-        val filterList = if (filters.isEmpty()) getFilterList() else filters
-        val airingFilter = filterList.find { it is AiringFilter } as AiringFilter
-        val yearFilter = filterList.find { it is YearFilter } as YearFilter
-        val otherFilter = filterList.find { it is OtherFilter } as OtherFilter
-
-        val pageString = if (page == 1) "" else "&page=$page"
-        return when {
-            query.isNotBlank() -> GET("$baseUrl/bbs/search.php?sfl=wr_subject&stx=$query&sop=and&gr_id=&srows=24&onetable=&page=$page", headers = headers)
-            airingFilter.state != 0 -> GET("$baseUrl/bbs/board.php?${airingFilter.toUriPart()}$pageString", headers = headers)
-            yearFilter.state != 0 -> GET("$baseUrl/bbs/board.php?${yearFilter.toUriPart()}$pageString", headers = headers)
-            otherFilter.state != 0 -> GET("$baseUrl/bbs/board.php?${otherFilter.toUriPart()}$pageString", headers = headers)
-            else -> popularAnimeRequest(page)
-        }
+        val board = filters.filterIsInstance<BoardFilter>().firstOrNull()?.selected ?: BOARD_ENDED
+        return boardRequest(board, page, query.trim())
     }
 
-    override fun searchAnimeSelector(): String = popularAnimeSelector()
-
-    override fun searchAnimeFromElement(element: Element): SAnime = popularAnimeFromElement(element)
-
-    override fun searchAnimeNextPageSelector(): String = popularAnimeNextPageSelector()
-
-    // ============================== FILTERS ===============================
+    override fun searchAnimeParse(response: Response): AnimesPage = boardParse(response)
 
     override fun getFilterList(): AnimeFilterList = AnimeFilterList(
-        AnimeFilter.Header("텍스트 검색은 필터를 무시합니다"),
-        AiringFilter(),
-        YearFilter(),
-        OtherFilter(),
+        AnimeFilter.Header("검색은 선택한 분류 안에서만 동작합니다"),
+        BoardFilter(),
     )
 
-    private class AiringFilter :
-        UriPartFilter(
-            "방영중",
-            arrayOf(
-                Pair("<선택하다>", ""),
-                Pair("전체", "bo_table=ing"),
-                Pair("일요일", "bo_table=ing&sca=일요일"),
-                Pair("월요일", "bo_table=ing&sca=월요일"),
-                Pair("화요일", "bo_table=ing&sca=화요일"),
-                Pair("수요일", "bo_table=ing&sca=수요일"),
-                Pair("목요일", "bo_table=ing&sca=목요일"),
-                Pair("금요일", "bo_table=ing&sca=금요일"),
-                Pair("토요일", "bo_table=ing&sca=토요일"),
-                Pair("기타", "bo_table=ing&sca=기타"),
-            ),
-        )
+    private class BoardFilter : AnimeFilter.Select<String>("분류", BOARDS) {
+        val selected get() = BOARDS[state]
+    }
 
-    private class YearFilter :
-        UriPartFilter(
-            "종영",
-            arrayOf(
-                Pair("<선택하다>", ""),
-                Pair("전체", "bo_table=fin"),
-                Pair("2024", "bo_table=fin&sca=2024"),
-                Pair("2023", "bo_table=fin&sca=2023"),
-                Pair("2022", "bo_table=fin&sca=2022"),
-                Pair("2021", "bo_table=fin&sca=2021"),
-                Pair("2020", "bo_table=fin&sca=2020"),
-                Pair("2019", "bo_table=fin&sca=2019"),
-                Pair("2018", "bo_table=fin&sca=2018"),
-                Pair("2017", "bo_table=fin&sca=2017"),
-                Pair("2016", "bo_table=fin&sca=2016"),
-                Pair("2015", "bo_table=fin&sca=2015"),
-                Pair("2014", "bo_table=fin&sca=2014"),
-                Pair("2013", "bo_table=fin&sca=2013"),
-                Pair("2012", "bo_table=fin&sca=2012"),
-                Pair("2011", "bo_table=fin&sca=2011"),
-                Pair("기타", "bo_table=fin&sca=기타"),
-            ),
-        )
+    private fun boardRequest(board: String, page: Int, keyword: String = ""): Request {
+        val url = baseUrl.toHttpUrl().newBuilder().addPathSegment(board).apply {
+            if (keyword.isNotEmpty()) addQueryParameter("keyword", keyword)
+            if (page > 1) addQueryParameter("page", page.toString())
+        }.build()
+        return GET(url, headers)
+    }
 
-    private class OtherFilter :
-        UriPartFilter(
-            "다른",
-            arrayOf(
-                Pair("<선택하다>", ""),
-                Pair("극장판", "bo_table=theater"),
-                Pair("전체", "bo_table=s"),
-                Pair("방영중", "bo_table=s&sca=방영중"),
-                Pair("종영", "bo_table=s&sca=종영"),
-                Pair("극장판", "bo_table=s&sca=극장판"),
-                Pair("기타", "bo_table=s&sca=기타"),
-            ),
-        )
-
-    private open class UriPartFilter(displayName: String, val vals: Array<Pair<String, String>>) : AnimeFilter.Select<String>(displayName, vals.map { it.first }.toTypedArray()) {
-        fun toUriPart() = vals[state].second
+    private fun boardParse(response: Response): AnimesPage {
+        val props = response.asJsoup().pageProps()
+        // Paginated boards expose "comics"; the airing board exposes a plain "items" list.
+        val comics = props["comics"]?.jsonObject
+        val items = comics?.get("data")?.jsonArray ?: props["items"]?.jsonArray ?: JsonArray(emptyList())
+        val animes = items.map { item ->
+            val series = item.jsonObject
+            SAnime.create().apply {
+                url = "/c/" + series.string("slug").orEmpty().encodeSegment()
+                title = series.string("title").orEmpty()
+                thumbnail_url = series.string("thumbnail")?.let { "$baseUrl/storage/$it" }
+            }
+        }
+        val current = comics?.get("current_page")?.jsonPrimitive?.intOrNull ?: 1
+        val last = comics?.get("last_page")?.jsonPrimitive?.intOrNull ?: 1
+        return AnimesPage(animes, current < last)
     }
 
     // =========================== Anime Details ============================
 
-    override fun animeDetailsParse(document: Document): SAnime {
-        val thumbnailUrl = document.selectFirst("div.view-info > div.image img")!!.attr("src")
-
+    override fun animeDetailsParse(response: Response): SAnime {
+        val series = response.asJsoup().pageProps()["comic"]!!.jsonObject
         return SAnime.create().apply {
-            title = document.selectFirst("div.view-title")!!.text()
-            thumbnail_url = if (thumbnailUrl.startsWith("..")) {
-                baseUrl + thumbnailUrl.substringAfter("..")
-            } else {
-                thumbnailUrl
-            }
-            status = SAnime.UNKNOWN
-            description = document.select("div.view-info > div.list > p").joinToString("\n") { row ->
-                row.select("span").joinToString(": ") { it.text() }
+            title = series.string("title").orEmpty()
+            thumbnail_url = series.string("thumbnail")?.let { "$baseUrl/storage/$it" }
+            author = series.string("author")
+            artist = series.string("director")
+            description = series.string("description")?.replace(HTML_BREAK, "\n")?.trim()
+            status = when (series.string("category")) {
+                BOARD_AIRING -> SAnime.ONGOING
+                BOARD_ENDED, BOARD_MOVIES -> SAnime.COMPLETED
+                else -> SAnime.UNKNOWN
             }
         }
     }
 
     // ============================== Episodes ==============================
 
-    override fun episodeListSelector(): String = "div.serial-list > ul.list-body > li"
-
-    override fun episodeFromElement(element: Element): SEpisode = SEpisode.create().apply {
-        episode_number = element.selectFirst("div.wr-num")?.let { it.text()?.toFloatOrNull() ?: 1F } ?: 1F
-        name = element.selectFirst("a")!!.text()
-        setUrlWithoutDomain(element.selectFirst("a")!!.attr("href"))
-        date_upload = element.selectFirst("div.wr-date")?.let { parseDate(it.text()) } ?: 0L
+    override fun episodeListParse(response: Response): List<SEpisode> {
+        val firstPage = response.asJsoup().pageProps()["episodes"]!!.jsonObject
+        val lastPage = firstPage["last_page"]?.jsonPrimitive?.intOrNull ?: 1
+        val pages = (2..lastPage).map { page ->
+            val url = response.request.url.newBuilder().setQueryParameter("page", page.toString()).build()
+            client.newCall(GET(url, headers)).execute().asJsoup().pageProps()["episodes"]!!.jsonObject
+        }
+        return (listOf(firstPage) + pages).flatMap { it["data"]!!.jsonArray }.map { item ->
+            val episode = item.jsonObject
+            SEpisode.create().apply {
+                url = "/e/" + episode.string("slug").orEmpty().encodeSegment()
+                name = episode.string("title").orEmpty()
+                episode_number = name.filter { it.isDigit() || it == '.' }.toFloatOrNull() ?: 0F
+                date_upload = episode.string("published_at")?.let(::parseDate) ?: 0L
+            }
+        }
     }
+
+    private fun Document.pageProps(): JsonObject {
+        val data = selectFirst("script[data-page=app]")?.data() ?: error("Page data not found")
+        return json.parseToJsonElement(data).jsonObject["props"]!!.jsonObject
+    }
+
+    private fun JsonObject.string(key: String): String? = (get(key) as? JsonElement)?.jsonPrimitive?.contentOrNull
+
+    private fun String.encodeSegment(): String = "https://aniweek.com/".toHttpUrl().newBuilder()
+        .addPathSegment(this)
+        .build()
+        .encodedPath
+        .removePrefix("/")
 
     // ============================ Video Links =============================
 
     private val playlistUtils by lazy { PlaylistUtils(client, headers) }
 
     override fun videoListParse(response: Response): List<Video> {
-        val document = response.asJsoup()
-
-        val form = document.selectFirst("form.tt") ?: error("Failed to generate form")
-        val actionUrl = form.attr("action")
-        val hiddenInputs = form.select("input[type=hidden][name][value]")
-
-        // The site's watch form now submits via GET (with the token as a query param)
-        // rather than POST; honor whatever method the form actually declares.
-        val videoRequest = if (form.attr("method").equals("post", ignoreCase = true)) {
-            val postBody = FormBody.Builder().apply {
-                hiddenInputs.forEach { add(it.attr("name"), it.attr("value")) }
-            }.build()
-
-            val postHeaders = headers.newBuilder().apply {
-                add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
-                add("Content-Type", "application/x-www-form-urlencoded")
-                add("Host", actionUrl.toHttpUrl().host)
-                add("Origin", baseUrl)
-                add("Referer", "$baseUrl/")
-            }.build()
-
-            POST(actionUrl, body = postBody, headers = postHeaders)
-        } else {
-            val getUrl = actionUrl.toHttpUrl().newBuilder().apply {
-                hiddenInputs.forEach { addQueryParameter(it.attr("name"), it.attr("value")) }
-            }.build()
-
-            val getHeaders = headers.newBuilder().apply {
-                add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
-                add("Host", getUrl.host)
-                add("Referer", "$baseUrl/")
-            }.build()
-
-            GET(getUrl.toString(), headers = getHeaders)
-        }
-
-        val newDocument = client.newCall(videoRequest).execute().asJsoup()
-
-        val iframeUrl = newDocument.selectFirst("iframe")?.attr("src") ?: error("Failed to extract iframe")
+        val playing = response.asJsoup().pageProps()["playing"]!!.jsonObject
+        val iframeUrl = playing["body"]!!.jsonObject.string("url") ?: error("Failed to extract iframe")
 
         val iframeHeaders = headers.newBuilder()
             .add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
@@ -275,15 +196,6 @@ class Aniweek :
             }
         }
 
-        val cookiePref = preferences.getString("cookie", null)
-        val cookieValue = if (cookiePref == null) {
-            val value = iframeResponse.headers.first { it.first == "set-cookie" }.second
-            preferences.edit().putString("cookie", value).apply()
-            value
-        } else {
-            cookiePref
-        }
-
         val hash = if (iframeUrl.contains("/video/")) {
             iframeUrl.substringAfter("/video/")
         } else {
@@ -296,7 +208,6 @@ class Aniweek :
             add("Origin", "https://${iframeUrl.toHttpUrl().host}")
             add("Referer", iframeUrl)
             add("X-Requested-With", "XMLHttpRequest")
-            add("Cookie", cookieValue.substringBefore(";"))
         }.build()
 
         val videoPostBody = "hash=$hash&r=${java.net.URLEncoder.encode("$baseUrl/", "utf-8")}"
@@ -311,7 +222,6 @@ class Aniweek :
         return if (parsed.hls) {
             val masterHeaders = headers.newBuilder().apply {
                 add("Accept", "*/*")
-                add("Cookie", cookieValue.substringBefore(";"))
                 add("Host", iframeUrl.toHttpUrl().host)
                 add("Referer", iframeUrl)
                 add("Sec-Fetch-Dest", "empty")
@@ -336,12 +246,6 @@ class Aniweek :
         }
     }
 
-    override fun videoFromElement(element: Element): Video = throw UnsupportedOperationException()
-
-    override fun videoListSelector(): String = throw UnsupportedOperationException()
-
-    override fun videoUrlParse(document: Document): String = throw UnsupportedOperationException()
-
     // ============================= Utilities ==============================
 
     override fun List<Video>.sort(): List<Video> {
@@ -361,13 +265,19 @@ class Aniweek :
         val videoSource: String,
     )
 
-    private fun parseDate(dateStr: String): Long = runCatching { DATE_FORMATTER.parse(dateStr)?.time }
+    private fun parseDate(dateStr: String): Long = runCatching { DATE_FORMATTER.parse(dateStr.substringBefore("T"))?.time }
         .getOrNull() ?: 0L
 
     companion object {
         private val DATE_FORMATTER by lazy {
             SimpleDateFormat("yyyy-MM-dd", Locale.KOREAN)
         }
+
+        private const val BOARD_AIRING = "방영중"
+        private const val BOARD_ENDED = "종영"
+        private const val BOARD_MOVIES = "극장판"
+        private val BOARDS = arrayOf(BOARD_ENDED, BOARD_AIRING, BOARD_MOVIES)
+        private val HTML_BREAK = Regex("""<br\s*/?>""")
 
         private const val PREF_QUALITY_KEY = "preferred_quality"
         private const val PREF_QUALITY_DEFAULT = "1080"
