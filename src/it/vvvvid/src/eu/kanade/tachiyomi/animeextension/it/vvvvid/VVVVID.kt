@@ -15,7 +15,7 @@ import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.network.awaitSuccess
 import keiyoushi.utils.getPreferencesLazy
-import keiyoushi.utils.toJsonRequestBody
+import keiyoushi.utils.toJsonBody
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -74,7 +74,7 @@ class VVVVID :
               "fp+mp4": false,
               "device_id_seed": "${getRandomIntString()}"
             }
-        """.trimIndent().toJsonRequestBody()
+        """.trimIndent().toJsonBody()
 
         val response = client.newCall(
             POST("$baseUrl/user/login", body = body, headers = headers),
