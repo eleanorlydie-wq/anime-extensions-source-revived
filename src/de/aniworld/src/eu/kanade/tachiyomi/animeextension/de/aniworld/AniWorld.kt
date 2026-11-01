@@ -100,6 +100,8 @@ class AniWorld :
 
     override fun searchAnimeParse(response: Response): AnimesPage {
         val body = response.bodyString()
+        // The endpoint answers an empty body to a blank keyword.
+        if (body.isBlank()) return AnimesPage(emptyList(), false)
         val results = json.decodeFromString<JsonArray>(body)
         val animes = results.mapNotNull {
             val obj = it.jsonObject
