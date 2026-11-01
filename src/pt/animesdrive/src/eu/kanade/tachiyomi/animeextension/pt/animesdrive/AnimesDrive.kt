@@ -24,7 +24,7 @@ class AnimesDrive :
     DooPlay(
         "pt-BR",
         "Animes Drive",
-        "https://animesdrive.online",
+        "https://animesdrive.cloud",
     ) {
 
     // ============================== Popular ===============================
