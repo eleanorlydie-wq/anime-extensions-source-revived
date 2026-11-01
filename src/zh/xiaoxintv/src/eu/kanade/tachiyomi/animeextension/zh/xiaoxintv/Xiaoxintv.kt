@@ -24,7 +24,7 @@ private object HotSortFilter :
 
 class Xiaoxintv : AnimeHttpSource() {
     override val baseUrl: String
-        get() = "https://xiaoxintv.cc"
+        get() = "https://ibaotv.com"
     override val lang: String
         get() = "zh"
     override val name: String
