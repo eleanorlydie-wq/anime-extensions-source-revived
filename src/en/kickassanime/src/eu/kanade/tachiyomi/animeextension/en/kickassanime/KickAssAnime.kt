@@ -39,6 +39,7 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
 import okhttp3.Response
 import uy.kohesive.injekt.injectLazy
+import java.net.URLEncoder
 import java.util.Locale
 
 class KickAssAnime :
@@ -243,7 +244,7 @@ class KickAssAnime :
             .add("Accept", "application/json, text/plain, */*")
             .add("Content-Type", "application/json")
             .add("Host", SEARCH_BASE_URL.toHttpUrl().host)
-            .add("Referer", "$SEARCH_BASE_URL/search?q=$query")
+            .add("Referer", "$SEARCH_BASE_URL/search?q=${URLEncoder.encode(query, "UTF-8")}")
             .build()
 
         if (filters.subPage.isNotBlank()) return GET("$SEARCH_BASE_URL/api/${filters.subPage}?page=$page", headers = newHeaders)
