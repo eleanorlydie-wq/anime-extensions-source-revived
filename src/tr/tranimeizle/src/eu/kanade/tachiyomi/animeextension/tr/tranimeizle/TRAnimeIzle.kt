@@ -29,7 +29,7 @@ import keiyoushi.utils.bodyString
 import keiyoushi.utils.getPreferencesLazy
 import keiyoushi.utils.parallelCatchingFlatMap
 import keiyoushi.utils.parallelCatchingFlatMapBlocking
-import keiyoushi.utils.toJsonRequestBody
+import keiyoushi.utils.toJsonBody
 import keiyoushi.utils.tryParse
 import keiyoushi.utils.useAsJsoup
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -46,7 +46,7 @@ class TRAnimeIzle :
 
     override val name = "TR Anime Izle"
 
-    override val baseUrl = "https://www.tranimeizle.io"
+    override val baseUrl = "https://www.tranimeizle.live"
 
     override val lang = "tr"
 
@@ -204,7 +204,7 @@ class TRAnimeIzle :
                 val fansubName = fansub.text()
 
                 val body = """{"EpisodeId":$episodeId,"FansubId":$fansubId}"""
-                    .toJsonRequestBody()
+                    .toJsonBody()
 
                 client.newCall(POST("$baseUrl/api/fansubSources", headers, body))
                     .awaitSuccess()
