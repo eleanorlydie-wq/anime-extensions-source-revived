@@ -224,8 +224,15 @@ class UniqueStream :
 
     // ============================= Anime list parsing =========================
 
+    /** The site masks links as `#uel-<16 chars>`; `/<16 chars + 6 random>/` redirects to the real page. */
+    private fun Element.unmaskedHref(): String {
+        val href = attr("href")
+        val token = href.substringAfter("#uel-", "")
+        return if (token.isBlank()) href else "$baseUrl/${token}aaaaaa/"
+    }
+
     private fun animeFromCardElement(element: Element): SAnime = SAnime.create().apply {
-        setUrlWithoutDomain(element.attr("href"))
+        setUrlWithoutDomain(element.unmaskedHref())
         val img = element.selectFirst("img")
         title = img?.attr("alt")?.ifBlank { null }
             ?: element.selectFirst("h3")?.text().orEmpty()
@@ -319,7 +326,7 @@ class UniqueStream :
     }
 
     private fun episodeFromElement(element: Element, seasonNumber: String): SEpisode = SEpisode.create().apply {
-        setUrlWithoutDomain(element.attr("href"))
+        setUrlWithoutDomain(element.unmaskedHref())
         val epNum = element.selectFirst("span.ep-card-badge")?.text()?.filter { it.isDigit() }.orEmpty()
         val title = element.selectFirst("h3.ep-card-title")?.text().orEmpty()
         episode_number = epNum.toFloatOrNull() ?: 0F
