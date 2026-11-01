@@ -1,7 +1,7 @@
 ext {
     extName = 'Hentai Torrent (Torrent)'
     extClass = '.HentaiTorrent'
-    extVersionCode = 7
+    extVersionCode = 8
     isTorrent = true
     isNsfw = true
 }
