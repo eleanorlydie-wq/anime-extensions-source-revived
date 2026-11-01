@@ -25,7 +25,7 @@ class AnimeQ :
     DooPlay(
         "pt-BR",
         "AnimeQ",
-        "https://animeq.net",
+        "https://animeq.cloud",
     ) {
     // ============================== Popular ===============================
     override fun popularAnimeSelector() = "article.w_item_a > a, article.w_item_b > a"
