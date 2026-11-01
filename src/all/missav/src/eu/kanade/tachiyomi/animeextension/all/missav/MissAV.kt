@@ -21,7 +21,7 @@ import keiyoushi.utils.addListPreference
 import keiyoushi.utils.delegate
 import keiyoushi.utils.getPreferencesLazy
 import keiyoushi.utils.parseAs
-import keiyoushi.utils.toJsonRequestBody
+import keiyoushi.utils.toJsonBody
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
@@ -147,18 +147,18 @@ class MissAV :
         val recommId = recommMap[query]
         return if (page == 1 || recommId == null) {
             val body = MissAvApi.searchData(query)
-                .toJsonRequestBody()
+                .toJsonBody()
             POST(MissAvApi.searchURL(getUuid()), docHeaders, body)
         } else {
             val body = MissAvApi.recommData
-                .toJsonRequestBody()
+                .toJsonBody()
             POST(MissAvApi.recommURL(recommId), docHeaders, body)
         }
     }
 
     override fun relatedAnimeListRequest(anime: SAnime): Request {
         val body = MissAvApi.relatedData(getUuid(), anime.url.substringAfterLast("/"))
-            .toJsonRequestBody()
+            .toJsonBody()
 
         return POST(MissAvApi.relatedURL(), docHeaders, body)
     }
