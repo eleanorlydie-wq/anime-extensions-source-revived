@@ -24,6 +24,7 @@ import keiyoushi.utils.parallelCatchingFlatMapBlocking
 import keiyoushi.utils.useAsJsoup
 import okhttp3.Request
 import okhttp3.Response
+import java.net.URLEncoder
 import java.util.Locale
 
 class AnimeAv1 :
@@ -106,7 +107,7 @@ class AnimeAv1 :
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
         val params = AnimeAv1Filters.getSearchParameters(filters)
         return when {
-            query.isNotBlank() -> GET("$baseUrl/catalogo?search=$query&page=$page", headers)
+            query.isNotBlank() -> GET("$baseUrl/catalogo?search=${URLEncoder.encode(query, "UTF-8")}&page=$page", headers)
             params.filter.isNotBlank() -> GET("$baseUrl/catalogo${params.getQuery().run { if (isNotBlank()) "$this&page=$page" else this }}", headers)
             else -> popularAnimeRequest(page)
         }
@@ -175,11 +176,10 @@ class AnimeAv1 :
 
     private suspend fun serverVideoResolver(url: String, prefix: String = "", serverName: String? = ""): List<Video> {
         val source = serverName?.ifEmpty { url } ?: url
+        // Server labels like "HLS" say nothing about the host, so the URL has to match too.
+        val sourceAndUrl = "$source $url".lowercase(Locale.ROOT)
         val matched = conventions
-            .firstOrNull { (_, names) ->
-                val sourceLower = source.lowercase(Locale.ROOT)
-                names.any { it.lowercase(Locale.ROOT) in sourceLower }
-            }
+            .firstOrNull { (_, names) -> names.any { it.lowercase(Locale.ROOT) in sourceAndUrl } }
             ?.first
         return when (matched) {
             "voe" -> voeExtractor.videosFromUrl(url, "$prefix ")
