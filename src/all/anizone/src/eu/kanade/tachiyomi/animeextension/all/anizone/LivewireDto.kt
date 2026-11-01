@@ -40,7 +40,8 @@ class ItemDto(
     val url: String,
     val cover: String? = null,
     @SerialName("main_title") val mainTitle: String? = null,
-    @SerialName("title_list") val titleList: Map<String, String?>? = null,
+    // An object keyed by language id, or an empty array when the item has no titles.
+    @SerialName("title_list") val titleList: JsonElement? = null,
     @SerialName("air_date") val airDate: String? = null,
 )
 
