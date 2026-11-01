@@ -16,9 +16,6 @@ import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.network.awaitSuccess
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 import keiyoushi.utils.addEditTextPreference
 import keiyoushi.utils.addListPreference
 import keiyoushi.utils.addSetPreference
@@ -35,6 +32,9 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
 import okhttp3.Response
 import uy.kohesive.injekt.injectLazy
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class Mapple :
     AnimeHttpSource(),
