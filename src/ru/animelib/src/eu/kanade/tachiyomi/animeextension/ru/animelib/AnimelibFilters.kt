@@ -26,7 +26,6 @@ object AnimelibFilters {
     class CheckBoxVal(name: String, state: Boolean = false) : AnimeFilter.CheckBox(name, state)
 
     class FormatFilter : CheckBoxFilterList("Формат", AnimelibFiltersData.FORMATS.map { CheckBoxVal(it.first) })
-    class PegiFilter : CheckBoxFilterList("Возрастной рейтинг", AnimelibFiltersData.PEGI.map { CheckBoxVal(it.first) })
     class OngoingFilter : CheckBoxFilterList("Статус тайтла", AnimelibFiltersData.ONGOING_STATUS.map { CheckBoxVal(it.first) })
 
     private inline fun <reified R> AnimeFilterList.parseCheckbox(options: Array<Pair<String, String>>): List<String> = (getFirst<R>() as CheckBoxFilterList).state
@@ -45,7 +44,6 @@ object AnimelibFilters {
     val FILTER_LIST get() = AnimeFilterList(
         GenresFilter(),
 
-        PegiFilter(),
         FormatFilter(),
         OngoingFilter(),
 
@@ -60,7 +58,6 @@ object AnimelibFilters {
     data class FilterSearchParams(
         val genres: IncludeExcludeParams = IncludeExcludeParams(),
         val format: List<String> = emptyList(),
-        val pegi: List<String> = emptyList(),
         val ongoingStatus: List<String> = emptyList(),
 
         val sortOrder: String = AnimelibFiltersData.ORDERS[0].second,
@@ -81,7 +78,6 @@ object AnimelibFilters {
         return FilterSearchParams(
             filters.parseTriFilter<GenresFilter>(AnimelibFiltersData.GENRES),
             filters.parseCheckbox<FormatFilter>(AnimelibFiltersData.FORMATS),
-            filters.parseCheckbox<PegiFilter>(AnimelibFiltersData.PEGI),
             filters.parseCheckbox<OngoingFilter>(AnimelibFiltersData.ONGOING_STATUS),
             sortOrder,
             sortDirection,
@@ -156,15 +152,6 @@ object AnimelibFilters {
             Pair("Этти", "72"),
             Pair("Юри", "73"),
             Pair("Яой", "74"),
-        )
-
-        val PEGI = arrayOf(
-            Pair("Нет", "0"),
-            Pair("6+", "1"),
-            Pair("12+", "2"),
-            Pair("16+", "3"),
-            Pair("18+", "4"),
-            Pair("18+ (RX)", "5"),
         )
 
         val ONGOING_STATUS = arrayOf(

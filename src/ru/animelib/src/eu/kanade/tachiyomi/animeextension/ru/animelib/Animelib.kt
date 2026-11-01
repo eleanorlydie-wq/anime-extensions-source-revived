@@ -344,7 +344,6 @@ class Animelib :
         searchParams.genres.include.forEach { url.addQueryParameter("genres[]", it) }
         searchParams.genres.exclude.forEach { url.addQueryParameter("genres_exclude[]", it) }
         searchParams.format.forEach { url.addQueryParameter("types[]", it) }
-        searchParams.pegi.forEach { url.addQueryParameter("caution[]", it) }
         searchParams.ongoingStatus.forEach { url.addQueryParameter("status[]", it) }
 
         url.addQueryParameter("sort_by", searchParams.sortOrder)
@@ -620,8 +619,9 @@ class Animelib :
         thumbnail_url = normalizeCoverUrl(cover.default)
         description = extractTextFromSummary(summary)
         status = convertStatus(animeStatus.id)
-        author = publisher?.joinToString { it.name }
-        artist = authors?.joinToString { it.name }
+        author = authors?.joinToString { it.name }
+        artist = publisher?.joinToString { it.name }
+        genre = genres?.joinToString { it.name }
     }
 
     private fun EpisodeInfo.toSEpisode() = SEpisode.create().apply {
