@@ -10,7 +10,13 @@ import kotlinx.serialization.json.Json
 @Serializable
 data class AnimeListResponse(
     val data: List<AnimeObject>,
+    val pagination: Pagination? = null,
 ) {
+    @Serializable
+    data class Pagination(
+        val hasNext: Boolean = false,
+    )
+
     @Serializable
     data class AnimeObject(
         @SerialName("_id")
@@ -43,28 +49,42 @@ data class LinkData(
 
 @Serializable
 data class AnimeDetails(
-    val props: PropsObject,
+    val data: DataObject,
 ) {
     @Serializable
-    data class PropsObject(
-        val pageProps: PagePropsObject,
+    data class DataObject(
+        val synopsys: String? = null,
+        val genres: List<String>? = null,
+        val type: String? = null,
+        val animeSeason: Season? = null,
+        val alternativeTitle: AlternativeTitle? = null,
     ) {
-        @Serializable
-        data class PagePropsObject(
-            val data: DataObject,
-        ) {
-            @Serializable
-            data class DataObject(
-                val synopsys: String? = null,
-                val genres: List<String>? = null,
-            ) {
-                fun toSAnime(): SAnime = SAnime.create().apply {
-                    description = synopsys
-                    genre = genres?.joinToString(", ")
-                }
+        fun toSAnime(): SAnime = SAnime.create().apply {
+            description = buildString {
+                synopsys?.let { append(it) }
+                listOfNotNull(
+                    type?.let { "Type: $it" },
+                    animeSeason?.takeIf { it.season != null || it.year != null }
+                        ?.let { "Season: ${listOfNotNull(it.season, it.year).joinToString(" ")}" },
+                    alternativeTitle?.english?.let { "English: $it" },
+                    alternativeTitle?.native?.let { "Native: $it" },
+                ).takeIf { it.isNotEmpty() }?.let { append("\n\n", it.joinToString("\n")) }
             }
+            genre = genres?.joinToString(", ")
         }
     }
+
+    @Serializable
+    data class Season(
+        val season: String? = null,
+        val year: Int? = null,
+    )
+
+    @Serializable
+    data class AlternativeTitle(
+        val english: String? = null,
+        val native: String? = null,
+    )
 }
 
 @Serializable
@@ -87,46 +107,19 @@ data class EpisodeListResponse(
 }
 
 @Serializable
-data class VideoData(
-    val props: PropsObject,
+data class EpisodeActionResult(
+    val episode: EpisodeData,
 ) {
     @Serializable
-    data class PropsObject(
-        val pageProps: PagePropsObject,
-    ) {
-        @Serializable
-        data class PagePropsObject(
-            val subtitles: List<SubtitleObject>? = null,
-            val animeData: AnimeDataObject,
-            val episode: EpisodeObject,
-        ) {
-            @Serializable
-            data class SubtitleObject(
-                val src: String,
-                val label: String,
-            )
+    data class EpisodeData(
+        val streamLink: String? = null,
+        val subData: List<Subtitle>? = null,
+    )
 
-            @Serializable
-            data class AnimeDataObject(
-                val title: String,
-            )
-
-            @Serializable
-            data class EpisodeObject(
-                val number: String,
-            )
-        }
-    }
-}
-
-@Serializable
-data class VideoList(
-    val directUrl: List<VideoObject>? = null,
-    val message: String? = null,
-) {
     @Serializable
-    data class VideoObject(
+    data class Subtitle(
         val src: String,
         val label: String,
+        val type: String? = null,
     )
 }
