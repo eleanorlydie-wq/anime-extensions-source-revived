@@ -54,7 +54,7 @@ class Xfani :
     AnimeHttpSource(),
     ConfigurableAnimeSource {
     override val baseUrl: String
-        get() = "https://anime.xifanacg.com"
+        get() = "https://next.xifanacg.com"
     override val lang: String
         get() = "zh"
     override val name: String
