@@ -41,7 +41,7 @@ class Animerco :
 
     override val name = "Animerco"
 
-    override val baseUrl = "https://zeta.animerco.org"
+    override val baseUrl = "https://eva.animerco.org"
 
     override val lang = "ar"
 
