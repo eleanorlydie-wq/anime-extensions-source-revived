@@ -17,9 +17,10 @@ class DoodExtractor(private val client: OkHttpClient) {
     ): Video? {
         return runCatching {
             val response = client.newCall(GET(url)).execute()
-            val newUrl = if (redirect) response.request.url.toString() else url
+            // pass_md5 only answers on the host that served the page, whatever URL was asked for.
+            val pageUrl = response.request.url.toString()
 
-            val doodHost = getBaseUrl(newUrl)
+            val doodHost = getBaseUrl(pageUrl)
             val content = response.body.string()
             if (!content.contains("'/pass_md5/")) return null
 
@@ -45,9 +46,10 @@ class DoodExtractor(private val client: OkHttpClient) {
             val videoUrlStart = client.newCall(
                 GET(
                     md5,
-                    Headers.headersOf("referer", newUrl),
+                    Headers.headersOf("referer", pageUrl),
                 ),
             ).execute().body.string()
+            if (!videoUrlStart.startsWith("http")) return null
             val videoUrl = "$videoUrlStart$randomString?token=$token&expiry=$expiry"
             Video(videoUrl, newQuality, videoUrl, headers = doodHeaders(doodHost), subtitleTracks = externalSubs)
         }.getOrNull()
@@ -78,8 +80,8 @@ class DoodExtractor(private val client: OkHttpClient) {
     }
 
     // Método para obtener headers personalizados
-    private fun doodHeaders(host: String) = Headers.Builder().apply {
+    private fun doodHeaders(baseUrl: String) = Headers.Builder().apply {
         add("User-Agent", "Aniyomi")
-        add("Referer", "https://$host/")
+        add("Referer", "$baseUrl/")
     }.build()
 }
