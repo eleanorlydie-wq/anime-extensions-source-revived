@@ -21,7 +21,7 @@ import keiyoushi.utils.getPreferencesLazy
 import keiyoushi.utils.parallelFlatMap
 import keiyoushi.utils.parallelMapNotNull
 import keiyoushi.utils.parseAs
-import keiyoushi.utils.toJsonRequestBody
+import keiyoushi.utils.toJsonBody
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -379,7 +379,7 @@ class HexaWatch :
         val key = response.request.header("X-Api-Key") ?: throw Exception("API Key was not sent in the request")
 
         val decryptionPayload = json.encodeToString(mapOf("text" to encryptedText, "key" to key))
-        val requestBody = decryptionPayload.toJsonRequestBody()
+        val requestBody = decryptionPayload.toJsonBody()
 
         val extractorData = client.newCall(
             Request.Builder().url(decryptionApiUrl).post(requestBody).build(),
