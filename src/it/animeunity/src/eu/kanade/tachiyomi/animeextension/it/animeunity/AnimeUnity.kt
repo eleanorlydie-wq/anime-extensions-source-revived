@@ -16,7 +16,7 @@ import eu.kanade.tachiyomi.network.awaitSuccess
 import eu.kanade.tachiyomi.util.asJsoup
 import keiyoushi.utils.getPreferencesLazy
 import keiyoushi.utils.parseAs
-import keiyoushi.utils.toJsonRequestBody
+import keiyoushi.utils.toJsonBody
 import kotlinx.serialization.json.Json
 import okhttp3.Headers
 import okhttp3.HttpUrl
@@ -33,7 +33,7 @@ class AnimeUnity :
 
     // TODO: Check frequency of url changes to potentially
     // add back overridable baseurl preference
-    override val baseUrl = "https://www.animeunity.so"
+    override val baseUrl = "https://www.animeunity.co"
 
     override val lang = "it"
 
@@ -178,7 +178,7 @@ class AnimeUnity :
                 "dubbed": ${if (filters.dub.isEmpty()) "false" else "true"},
                 "season": ${filters.season.falseIfEmpty()}
             }
-            """.trimIndent().toJsonRequestBody()
+            """.trimIndent().toJsonBody()
 
         return POST("$baseUrl/archivio/get-animes", body = body, headers = searchHeaders)
     }
@@ -386,7 +386,7 @@ class AnimeUnity :
                     Track(it.groupValues[2], it.groupValues[1])
                 }.toList()*/
 
-        Regex("""https?://vixcloud\.co/playlist/(.+)\?.*type=video&.*rendition=(\d+p?).*""").findAll(masterPl).forEach { match ->
+        Regex("""https?://[^/]+/playlist/(.+)\?.*type=video&.*rendition=(\d+p?).*""").findAll(masterPl).forEach { match ->
             var videoUrl = match.groupValues[0]
             val filename = match.groupValues[1]
             if (!filename.endsWith(".m3u8")) {
