@@ -4,6 +4,7 @@ import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import java.util.Calendar
 
 object AnimeUnityFilters {
 
@@ -143,9 +144,9 @@ object AnimeUnityFilters {
             Pair("Sci-fi", "Sci-40"),
             Pair("Seinen", "49"),
             Pair("Shoujo", "18"),
-            Pair("Shoujo Ai", "Shoujo 26"),
+            Pair("Shoujo Ai", "26"),
             Pair("Shounen", "34"),
-            Pair("Shounen Ai", "Shounen 41"),
+            Pair("Shounen Ai", "41"),
             Pair("Slice of Life", "Slice of 50"),
             Pair("Space", "19"),
             Pair("Splatter", "52"),
@@ -196,7 +197,7 @@ object AnimeUnityFilters {
             Pair("Sì", "true"),
         )
 
-        val YEAR = arrayOf(ANY) + (1969..2025).map {
+        val YEAR = arrayOf(ANY) + (1969..Calendar.getInstance().get(Calendar.YEAR) + 1).map {
             Pair(it.toString(), it.toString())
         }.reversed().toTypedArray()
     }
