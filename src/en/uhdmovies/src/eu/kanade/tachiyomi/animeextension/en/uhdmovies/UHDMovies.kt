@@ -434,7 +434,7 @@ class UHDMovies :
 
         private const val PREF_DOMAIN_KEY = "pref_domain_v2"
         private const val PREF_DOMAIN_TITLE = "Currently used domain"
-        private const val PREF_DOMAIN_DEFAULT = "https://uhdmovies.my"
+        private const val PREF_DOMAIN_DEFAULT = "https://uhdmovies.beauty"
         private const val PREF_DOMAIN_DIALOG_TITLE = PREF_DOMAIN_TITLE
 
         private const val PREF_QUALITY_KEY = "preferred_quality"
