@@ -29,7 +29,7 @@ import java.util.Locale
 class Kuronime :
     ParsedAnimeHttpSource(),
     ConfigurableAnimeSource {
-    override val baseUrl: String = "https://tv1.kuronime.vip"
+    override val baseUrl: String = "https://kuronime.net"
     override val lang: String = "id"
     override val name: String = "Kuronime"
     override val supportsLatest: Boolean = true
