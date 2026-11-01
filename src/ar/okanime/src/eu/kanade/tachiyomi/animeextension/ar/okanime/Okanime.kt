@@ -32,7 +32,7 @@ class Okanime :
 
     override val name = "Okanime"
 
-    override val baseUrl = "https://www.okanime.xyz"
+    override val baseUrl = "https://ww3.okanime.xyz"
 
     override val lang = "ar"
 
