@@ -55,7 +55,11 @@ class FrAnime : AnimeHttpSource() {
     override fun popularAnimeRequest(page: Int) = throw UnsupportedOperationException()
 
     // =============================== Latest ===============================
-    override suspend fun getLatestUpdates(page: Int) = pagesToAnimesPage(database.reversed(), page)
+    override suspend fun getLatestUpdates(page: Int) = pagesToAnimesPage(
+        // About 40% of entries have no update date; those keep the API's order after the dated ones.
+        database.reversed().sortedByDescending { maxOf(it.updateTime ?: 0L, it.updateTimeVF ?: 0L) },
+        page,
+    )
 
     override fun latestUpdatesParse(response: Response): AnimesPage = throw UnsupportedOperationException()
 
@@ -165,7 +169,7 @@ class FrAnime : AnimeHttpSource() {
 
     private fun pageToSAnimes(page: List<Anime>): List<SAnime> = page.flatMap { anime ->
         anime.seasons.flatMapIndexed { index, season ->
-            val seasonTitle = anime.title + if (anime.seasons.size > 1) " S${index + 1}" else ""
+            val seasonTitle = anime.title.ifBlank { anime.originalTitle } + if (anime.seasons.size > 1) " S${index + 1}" else ""
             val hasVostfr = season.episodes.any { ep -> ep.languages.vo.players.isNotEmpty() }
             val hasVf = season.episodes.any { ep -> ep.languages.vf.players.isNotEmpty() }
 
@@ -178,7 +182,7 @@ class FrAnime : AnimeHttpSource() {
             languages.map { lang ->
                 SAnime.create().apply {
                     title = seasonTitle + if (lang.third) " (${lang.first})" else ""
-                    thumbnail_url = anime.poster
+                    thumbnail_url = anime.poster.let { if (it.startsWith("/")) "$baseUrl$it" else it }
                     genre = anime.genres.joinToString()
                     status = parseStatus(anime.status, anime.seasons.size, index + 1)
                     description = anime.description
