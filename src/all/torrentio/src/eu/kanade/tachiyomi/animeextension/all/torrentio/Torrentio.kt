@@ -232,7 +232,7 @@ class Torrentio :
               "platform": "WEB",
               "country": "$country",
               "language": "$language",
-              "searchQuery": "${query.replace(Regex("[^A-Za-z0-9 ]"), "").trim()}",
+              "searchQuery": "${query.replace(Regex("[^\\p{L}\\p{N} ]"), "").trim()}",
               "packages": [$packages],
               "objectTypes": [$objectTypes],
               "popularTitlesSortBy": "TRENDING",
