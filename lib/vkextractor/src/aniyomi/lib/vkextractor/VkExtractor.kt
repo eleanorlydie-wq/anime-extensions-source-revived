@@ -7,6 +7,7 @@ import eu.kanade.tachiyomi.network.await
 import eu.kanade.tachiyomi.network.awaitSuccess
 import keiyoushi.utils.bodyString
 import keiyoushi.utils.toHex
+import okhttp3.CookieJar
 import okhttp3.FormBody
 import okhttp3.Headers
 import okhttp3.OkHttpClient
@@ -25,6 +26,8 @@ class VkExtractor(private val client: OkHttpClient, headers: Headers) {
         .add("Referer", "$VK_URL/")
         .build()
 
+    private val cookielessClient by lazy { client.newBuilder().cookieJar(CookieJar.NO_COOKIES).build() }
+
     suspend fun videosFromUrl(url: String, prefix: String = ""): List<Video> {
         val videoId = extractVideoId(url) ?: return emptyList()
 
@@ -42,8 +45,21 @@ class VkExtractor(private val client: OkHttpClient, headers: Headers) {
             if (parts.size == 2) "$VK_URL/video_ext.php?oid=${parts[0]}&id=${parts[1]}&autoplay=0" else url
         }
 
-        val htmlContent = handleWafChallenge(embedUrl)
-        return extractVideosFromHtml(htmlContent, prefix)
+        return extractVideosFromHtml(fetchEmbedPage(embedUrl), prefix)
+    }
+
+    /**
+     * VK puts each anonymous visitor in one of two buckets, and the bucket follows the session
+     * cookie: one gets the video links in the page, the other a client-rendered player without them.
+     * Asking again without cookies draws a new bucket, about a third to a half of the time a good one.
+     */
+    private suspend fun fetchEmbedPage(url: String): String {
+        var html = handleWafChallenge(url)
+        repeat(EMBED_RETRIES) {
+            if (CLIENT_RENDERED_MARKER !in html) return html
+            html = cookielessClient.newCall(GET(url, documentHeaders)).await().bodyString()
+        }
+        return html
     }
 
     private suspend fun handleWafChallenge(url: String): String {
@@ -154,6 +170,8 @@ class VkExtractor(private val client: OkHttpClient, headers: Headers) {
     data class RawVideo(val url: String, val quality: String)
 
     companion object {
+        private const val CLIENT_RENDERED_MARKER = "window.isBFF = true"
+        private const val EMBED_RETRIES = 8
         private const val VK_URL = "https://vk.com"
         private const val VK_API_URL = "https://vk.com/al_video.php?act=show"
     }

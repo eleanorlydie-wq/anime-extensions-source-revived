@@ -12,6 +12,7 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.ParsedAnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
+import eu.kanade.tachiyomi.network.await
 import eu.kanade.tachiyomi.network.awaitSuccess
 import eu.kanade.tachiyomi.util.asJsoup
 import keiyoushi.utils.addListPreference
@@ -19,6 +20,7 @@ import keiyoushi.utils.bodyString
 import keiyoushi.utils.getPreferencesLazy
 import keiyoushi.utils.parallelCatchingFlatMapBlocking
 import keiyoushi.utils.parseAs
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -292,13 +294,28 @@ abstract class WcoTheme :
         return runBlocking { runCatching { iframeParse(iframeUrl) }.getOrElse { emptyList() } }
     }
 
+    // The player host answers 503 "Servers Busy" on most requests while at capacity, and a
+    // request a moment later usually succeeds.
+    private suspend fun awaitPlayerPage(url: String): Response {
+        repeat(PLAYER_BUSY_RETRIES) {
+            val response = client.newCall(GET(url, headers)).await()
+            if (response.code != 503) {
+                if (response.isSuccessful) return response
+                response.close()
+                throw Exception("HTTP error ${response.code}")
+            }
+            response.close()
+            delay(PLAYER_BUSY_DELAY_MS)
+        }
+        return client.newCall(GET(url, headers)).awaitSuccess()
+    }
+
     open suspend fun iframeParse(iframeLink: String): List<Video> = if (iframeLink.contains("embed.wcostream")) {
         // Dub or Hard-sub
         // index.php is now an announcement interstitial that redirects to video-js.php
         // (same query string) client-side, so request the player page directly.
         val playerLink = iframeLink.replace("/embed/index.php", "/embed/video-js.php")
-        val iframeSoup = client.newCall(GET(playerLink, headers))
-            .awaitSuccess().asJsoup()
+        val iframeSoup = awaitPlayerPage(playerLink).asJsoup()
 
         val getVideoLinkScript = iframeSoup.selectFirst("script:containsData(getJSON)")?.data()
             ?: throw Exception("Video player not found")
@@ -380,6 +397,9 @@ abstract class WcoTheme :
         const val PREF_QUALITY_DEFAULT = "720"
         val PREF_QUALITY_ENTRIES = listOf("1080p", "720p", "480p")
         val PREF_QUALITY_VALUES = listOf("1080", "720", "480")
+
+        private const val PLAYER_BUSY_RETRIES = 5
+        private const val PLAYER_BUSY_DELAY_MS = 2000L
 
         const val DESKTOP_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/88.0.4324.150 Safari/537.36 Edg/88.0.705.63"
     }

@@ -1,5 +1,6 @@
 package aniyomi.lib.cdaextractor
 
+import aniyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
@@ -8,7 +9,6 @@ import keiyoushi.utils.toJsonRequestBody
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import okhttp3.Headers
-import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import uy.kohesive.injekt.injectLazy
 import java.net.URLDecoder
@@ -21,7 +21,6 @@ class CdaExtractor(private val client: OkHttpClient) {
     fun getVideosFromUrl(url: String, headers: Headers, prefix: String): List<Video> {
         val embedHeaders = headers.newBuilder()
             .add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
-            .add("Host", url.toHttpUrl().host)
             .build()
 
         val document = client.newCall(
@@ -38,6 +37,15 @@ class CdaExtractor(private val client: OkHttpClient) {
         val data = json.decodeFromString<PlayerData>(
             document.selectFirst("div[player_data]")!!.attr("player_data"),
         )
+
+        // Newer uploads carry no progressive file, only HLS and DASH manifests.
+        if (data.video.file.isBlank() && data.video.manifest_apple.isNotBlank()) {
+            return PlaylistUtils(client, headers).extractFromHls(
+                data.video.manifest_apple,
+                videoNameGen = { "${prefix}cda.pl - $it" },
+            )
+        }
+
         return data.video.qualities.map { quality ->
             if (quality.value == data.video.quality && quality.value != "lq") {
                 val videoUrl = decryptFile(data.video.file)
@@ -105,7 +113,8 @@ class CdaExtractor(private val client: OkHttpClient) {
         @Serializable
         data class VideoObject(
             val id: String,
-            val file: String,
+            val file: String = "",
+            val manifest_apple: String = "",
             val quality: String,
             val qualities: Map<String, String>,
             val ts: Int,

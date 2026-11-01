@@ -18,7 +18,7 @@ class SendvidExtractor(private val client: OkHttpClient, private val headers: He
         return if (masterUrl.contains(".m3u8")) {
             playlistUtils.extractFromHls(masterUrl, url, videoNameGen = { prefix + "Sendvid:$it" })
         } else {
-            val httpUrl = "https://${url.toHttpUrl()}"
+            val httpUrl = "https://${url.toHttpUrl().host}"
             val newHeaders = headers.newBuilder()
                 .set("Origin", httpUrl)
                 .set("Referer", "$httpUrl/")
