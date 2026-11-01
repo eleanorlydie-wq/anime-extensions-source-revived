@@ -6,6 +6,7 @@ import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.util.asJsoup
 import keiyoushi.lib.unpacker.SubstringExtractor
 import okhttp3.Headers
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import java.net.URLDecoder
 
@@ -23,7 +24,10 @@ class MixDropExtractor(private val client: OkHttpClient) {
             "User-Agent",
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36",
         )
-        val doc = client.newCall(GET(url, headers)).execute().asJsoup()
+        // mixdrop.co and other retired mirrors are parked or unreachable, and the id works on any mirror.
+        val doc = runCatching { client.newCall(GET(url, headers)).execute().asJsoup() }.getOrNull()
+            ?.takeIf { "MDCore" in it.html() }
+            ?: client.newCall(GET(url.toHttpUrl().newBuilder().host(LIVE_MIRROR).build(), headers)).execute().asJsoup()
         val unpacked = doc.selectFirst("script:containsData(eval):containsData(MDCore)")
             ?.data()
             ?.let(::unpackMixDrop)
@@ -56,6 +60,7 @@ class MixDropExtractor(private val client: OkHttpClient) {
 }
 
 private const val DEFAULT_REFERER = "https://mixdrop.co/"
+private const val LIVE_MIRROR = "mixdrop.ag"
 
 /**
  * Unpacks MixDrop's eval-packed player script, e.g.:
