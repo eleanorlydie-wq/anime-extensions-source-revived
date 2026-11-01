@@ -14,18 +14,18 @@ import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.network.awaitSuccess
 import eu.kanade.tachiyomi.util.asJsoup
+import java.net.URLDecoder
+import java.text.SimpleDateFormat
+import java.util.Locale
 import keiyoushi.utils.getPreferencesLazy
 import keiyoushi.utils.parseAs
-import keiyoushi.utils.toJsonRequestBody
+import keiyoushi.utils.toJsonBody
 import kotlinx.serialization.Serializable
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
 import okhttp3.Response
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
-import java.net.URLDecoder
-import java.text.SimpleDateFormat
-import java.util.Locale
 
 class Hstream :
     ParsedAnimeHttpSource(),
@@ -169,7 +169,7 @@ class Hstream :
             set("X-XSRF-TOKEN", URLDecoder.decode(token, "utf-8"))
         }.build()
 
-        val body = """{"episode_id": "$episodeId"}""".toJsonRequestBody()
+        val body = """{"episode_id": "$episodeId"}""".toJsonBody()
         val data = client.newCall(POST("$baseUrl/player/api", newHeaders, body)).execute()
             .parseAs<PlayerApiResponse>()
 
