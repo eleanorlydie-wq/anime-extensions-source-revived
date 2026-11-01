@@ -17,6 +17,14 @@
                     android:host="animesdigital.org"
                     android:pathPattern="/anime/a/..*"
                     android:scheme="https" />
+                <data
+                    android:host="animesdigital.org"
+                    android:pathPattern="/video/a/..*"
+                    android:scheme="https" />
+                <data
+                    android:host="animesdigital.org"
+                    android:pathPattern="/filme/..*"
+                    android:scheme="https" />
             </intent-filter>
         </activity>
     </application>
