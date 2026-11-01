@@ -20,9 +20,12 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.multisrc.animestream.AnimeStream
 import eu.kanade.tachiyomi.multisrc.animestream.AnimeStreamFilters
 import eu.kanade.tachiyomi.network.GET
-import keiyoushi.utils.tryParse
+import eu.kanade.tachiyomi.network.awaitSuccess
+import keiyoushi.utils.parallelCatchingFlatMapBlocking
+import keiyoushi.utils.useAsJsoup
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
+import okhttp3.Response
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 
@@ -124,15 +127,31 @@ class AnimeIndo :
     }
 
     // ============================== Episodes ==============================
-    override fun episodeListSelector() = "div.listeps li:has(.epsleft)"
+    override fun episodeListSelector() = "div.relative.group:has(> a[href*=/episode/])"
+
+    override fun episodeListParse(response: Response): List<SEpisode> {
+        val document = response.useAsJsoup()
+        val episodes = document.select(episodeListSelector()).map(::episodeFromElement).asReversed()
+        if (episodes.isNotEmpty()) return episodes
+
+        // Movies have no episode cards: their own page holds the player.
+        return listOf(
+            SEpisode.create().apply {
+                setUrlWithoutDomain(document.location())
+                name = "Movie"
+                episode_number = 1F
+            },
+        )
+    }
 
     override fun episodeFromElement(element: Element) = SEpisode.create().apply {
-        val ahref = element.selectFirst("a")!!
-        setUrlWithoutDomain(ahref.attr("href"))
-        val num = ahref.text()
-        name = "Episode $num"
-        episode_number = num.trim().toFloatOrNull() ?: 0F
-        date_upload = element.selectFirst("span.date")?.text().let { dateFormatter.tryParse(it) }
+        setUrlWithoutDomain(element.selectFirst("a")!!.attr("abs:href"))
+        val labels = element.select("div.text-xs > span").eachText()
+        name = listOfNotNull(
+            labels.joinToString(" - ").ifBlank { null },
+            element.selectFirst("h3")?.text(),
+        ).joinToString(": ")
+        episode_number = labels.lastOrNull()?.filter { it.isDigit() || it == '.' }?.toFloatOrNull() ?: 0F
     }
 
     // ============================ Video Links =============================
@@ -142,13 +161,33 @@ class AnimeIndo :
     private val yourUploadExtractor by lazy { YourUploadExtractor(client) }
     private val okruExtractor by lazy { OkruExtractor(client) }
 
+    override fun videoListParse(response: Response): List<Video> {
+        val document = response.useAsJsoup()
+        val servers = document.select("[wire:snapshot*=watch-component]")
+            .firstOrNull()
+            ?.attr("wire:snapshot")
+            ?.let { SERVER_REGEX.findAll(it).map { m -> m.groupValues[1] to m.groupValues[2].replace("\\/", "/") }.toList() }
+            .orEmpty()
+
+        return servers.parallelCatchingFlatMapBlocking { (label, embedUrl) ->
+            val embed = client.newCall(GET(embedUrl, headers)).awaitSuccess().useAsJsoup()
+            val source = embed.selectFirst("video source[src]")?.attr("abs:src")
+            if (source != null) {
+                listOf(Video(source, label, source, headers))
+            } else {
+                val iframe = embed.selectFirst("iframe[src]")?.attr("abs:src") ?: return@parallelCatchingFlatMapBlocking emptyList()
+                getVideoList(iframe, label.lowercase())
+            }
+        }
+    }
+
     override suspend fun getVideoList(url: String, name: String): List<Video> = with(name) {
         when {
-            contains("streamtape") -> streamTapeExtractor.videoFromUrl(url)?.let(::listOf).orEmpty()
+            url.contains("streamtape") || contains("streamtape") -> streamTapeExtractor.videoFromUrl(url)?.let(::listOf).orEmpty()
 
-            contains("mp4") -> mp4uploadExtractor.videosFromUrl(url, headers)
+            url.contains("mp4upload") || contains("mp4") -> mp4uploadExtractor.videosFromUrl(url, headers)
 
-            contains("yourupload") -> yourUploadExtractor.videoFromUrl(url, headers)
+            url.contains("yourupload") || contains("yourupload") -> yourUploadExtractor.videoFromUrl(url, headers)
 
             url.contains("ok.ru") -> okruExtractor.videosFromUrl(url)
 
@@ -166,5 +205,9 @@ class AnimeIndo :
                 emptyList()
             }
         }
+    }
+
+    companion object {
+        private val SERVER_REGEX = Regex("""\{"label":"([^"]+)","type":"[^"]*","link":"([^"]+)"\}""")
     }
 }
