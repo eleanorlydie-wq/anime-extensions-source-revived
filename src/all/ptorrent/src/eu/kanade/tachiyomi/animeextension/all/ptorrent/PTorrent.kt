@@ -75,7 +75,7 @@ class PTorrent :
         val document = response.asJsoup()
         val cards = document.select(popularAnimeSelector())
         val checked = cards
-            .filterNot { it.isNonVideoCatalog() }
+            .filterNot { it.isNonVideoCatalog() || BLOCKED_CONTENT.containsMatchIn(it.text()) }
             .parallelMap { it to isVideoPost(it) }
         saveVerdicts()
         val animes = checked.filter { it.second }.map { popularAnimeFromElement(it.first) }
@@ -242,6 +242,10 @@ class PTorrent :
 
     override fun episodeListParse(response: Response): List<SEpisode> {
         val document = response.asJsoup()
+        // Hard-coded and not configurable. Covers titles and tags only, so untagged posts can get through.
+        if (BLOCKED_CONTENT.containsMatchIn(document.select("h1, div.catalog, div.article-content").text())) {
+            throw Exception("This title is blocked")
+        }
         val downloadButtonUrl = document.selectFirst("div.download-container a.download-button")?.attr("abs:href")
             .takeUnless { it.isNullOrEmpty() } ?: throw Exception("No Torrent Found!")
         val downloadPage = client.newCall(GET(downloadButtonUrl, headers)).execute().use { it.asJsoup() }
@@ -368,6 +372,8 @@ class PTorrent :
     )
 
     companion object {
+        private val BLOCKED_CONTENT = Regex("""\b(loli|lolis|lolicon|lolita|shota|shotas|shotacon|toddlercon|underage|shoujo kyouiku)\b""", RegexOption.IGNORE_CASE)
+
         const val PREFIX_SEARCH = "id:"
 
         private const val PAGE_SIZE = 60

@@ -227,6 +227,7 @@ class Hanime :
         dynamicTagNames = hits.asSequence()
             .flatMap { it.tags.asSequence() }
             .mapNotNull { it.trim().takeIf(String::isNotEmpty) }
+            .filterNot { it.lowercase(Locale.US) in BLOCKED_TAGS }
             .distinct()
             .sortedBy { it.lowercase(Locale.US) }
             .toList()
@@ -323,7 +324,7 @@ class Hanime :
         orderBy: String = "likes",
         ordering: String = "desc",
     ): AnimesPage {
-        var filtered = hits
+        var filtered = hits.filterNot { hit -> hit.tags.any { it.lowercase(Locale.US) in BLOCKED_TAGS } }
 
         // Apply text search filter
         if (query.isNotEmpty()) {
@@ -590,6 +591,9 @@ class Hanime :
 
     override fun episodeListParse(response: Response): List<SEpisode> {
         val document = response.useAsJsoup()
+        // Hard-coded and not configurable. Covers the site's tags only, so untagged titles can get through.
+        val pageTags = document.select("a[href^=/browse/tags/]").map { it.text().lowercase(Locale.US) }
+        if (pageTags.any { it in BLOCKED_TAGS }) throw Exception("This title is blocked")
         val currentSlug = response.request.url.pathSegments.last()
         val currentName = document.selectFirst("h1")?.text().orEmpty()
         val currentSeriesName = getTitle(currentName)
@@ -897,7 +901,6 @@ class Hanime :
         Tag("INCEST", "INCEST"),
         Tag("INFLATION", "INFLATION"),
         Tag("LACTATION", "LACTATION"),
-        Tag("LOLI", "LOLI"),
         Tag("MAID", "MAID"),
         Tag("MASTURBATION", "MASTURBATION"),
         Tag("MILF", "MILF"),
@@ -917,7 +920,6 @@ class Hanime :
         Tag("RIMJOB", "RIMJOB"),
         Tag("SCAT", "SCAT"),
         Tag("SCHOOL GIRL", "SCHOOL GIRL"),
-        Tag("SHOTA", "SHOTA"),
         Tag("SOFTCORE", "SOFTCORE"),
         Tag("SWIMSUIT", "SWIMSUIT"),
         Tag("TEACHER", "TEACHER"),
@@ -949,6 +951,8 @@ class Hanime :
     // ── Preferences ────────────────────────────────────────────────────
 
     companion object {
+        private val BLOCKED_TAGS = setOf("loli", "shota")
+
         private const val TAG = "Hanime"
         private const val DEFAULT_CDN_BASE_URL = "https://guest.freeanimehentai.net"
         private const val AUTHED_API_BASE_URL = "https://auth.hanime.tv"
