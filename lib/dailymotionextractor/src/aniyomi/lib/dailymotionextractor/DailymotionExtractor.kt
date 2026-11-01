@@ -37,7 +37,7 @@ class DailymotionExtractor(private val client: OkHttpClient, private val headers
 
         val internalData = htmlString.substringAfter("\"dmInternalData\":").substringBefore("</script>")
         val ts = internalData.substringAfter("\"ts\":").substringBefore(",")
-        val v1st = internalData.substringAfter("\"v1st\":\"").substringBefore("\",")
+        val v1st = internalData.substringAfter("\"v1st\":\"").substringBefore("\"")
 
         val videoQuery = url.toHttpUrl().run {
             queryParameter("video") ?: pathSegments.last()
