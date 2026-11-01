@@ -8,7 +8,6 @@ import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.util.asJsoup
 import keiyoushi.utils.toJsonBody
-import kotlin.math.abs
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
@@ -16,6 +15,7 @@ import kotlinx.serialization.json.Json
 import okhttp3.Headers
 import okhttp3.OkHttpClient
 import uy.kohesive.injekt.injectLazy
+import kotlin.math.abs
 
 class YouTubeExtractor(private val client: OkHttpClient) {
 
