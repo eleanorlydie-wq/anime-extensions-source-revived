@@ -16,6 +16,9 @@ import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.network.awaitSuccess
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import keiyoushi.utils.addEditTextPreference
 import keiyoushi.utils.addListPreference
 import keiyoushi.utils.addSetPreference
@@ -24,7 +27,7 @@ import keiyoushi.utils.getPreferencesLazy
 import keiyoushi.utils.parallelCatchingFlatMap
 import keiyoushi.utils.parallelMapNotNull
 import keiyoushi.utils.parseAs
-import keiyoushi.utils.toJsonRequestBody
+import keiyoushi.utils.toJsonBody
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -32,9 +35,6 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
 import okhttp3.Response
 import uy.kohesive.injekt.injectLazy
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 class Mapple :
     AnimeHttpSource(),
@@ -417,7 +417,7 @@ class Mapple :
                 ),
             )
 
-            val requestBody = json.encodeToString(payload).toJsonRequestBody()
+            val requestBody = json.encodeToString(payload).toJsonBody()
             val requestUrl = "$mappleApi/watch/${episodeData.type}/${episodeData.tmdbId}"
 
             val headers = headers.newBuilder()
@@ -630,9 +630,9 @@ class Mapple :
         private const val TMDB_API_KEY = BuildConfig.TMDB_API
 
         private const val PREF_DOMAIN_KEY = "pref_domain"
-        private const val PREF_DOMAIN_DEFAULT = "https://mapple.uk"
-        private val DOMAIN_ENTRIES = arrayOf("mapple.uk", "mappl.tv", "mapple.mov")
-        private val DOMAIN_VALUES = arrayOf("https://mapple.uk", "https://mappl.tv", "https://mapple.mov")
+        private const val PREF_DOMAIN_DEFAULT = "https://mapple.fun"
+        private val DOMAIN_ENTRIES = arrayOf("mapple.fun", "mapple.uk", "mappl.tv", "mapple.mov")
+        private val DOMAIN_VALUES = arrayOf("https://mapple.fun", "https://mapple.uk", "https://mappl.tv", "https://mapple.mov")
 
         private const val PREF_LATEST_KEY = "pref_latest"
         private const val PREF_LATEST_DEFAULT = "movie"
