@@ -15,6 +15,7 @@ import eu.kanade.tachiyomi.animesource.online.ParsedAnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.util.asJsoup
 import keiyoushi.utils.getPreferencesLazy
+import keiyoushi.utils.parallelMapNotNullBlocking
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
 import okhttp3.Response
@@ -279,21 +280,25 @@ class Rule34Video :
                 add("Accept-Language", "en-US,en;q=0.5")
             }.build()
 
-        val document = response.asJsoup()
+        // The player's flashvars list every quality as video_url/video_alt_urlN + *_text.
+        val page = response.body.string()
+        val sources = FLASHVARS_URL_REGEX.findAll(page).mapNotNull { match ->
+            val (key, originalUrl) = match.destructured
+            val quality = Regex("""\b${key}_text:\s*'([^']+)'""").find(page)?.groupValues?.get(1)
+                ?: return@mapNotNull null
+            quality to originalUrl
+        }.toList()
 
-        return document.select("div.label:contains(Download) ~ a.tag_item")
-            .mapNotNull { element ->
-                val originalUrl = element.attr("href")
-                // We need to do that because this url returns a http 403 error
-                // if you try to connect using http/1.1, which is the protocol
-                // that the player uses. OkHttp uses http/2 by default, so we
-                // fetch the video url first via okhttp and then pass it for the player.
-                val url = noRedirectClient.newCall(GET(originalUrl, headers)).execute()
-                    .use { it.headers["location"] }
-                    ?: return@mapNotNull null
-                val quality = element.text().substringAfter(" ")
-                Video(url, quality, url, headers)
-            }
+        return sources.parallelMapNotNullBlocking { (quality, originalUrl) ->
+            // We need to do that because this url returns a http 403 error
+            // if you try to connect using http/1.1, which is the protocol
+            // that the player uses. OkHttp uses http/2 by default, so we
+            // fetch the video url first via okhttp and then pass it for the player.
+            val url = noRedirectClient.newCall(GET(originalUrl, headers)).execute()
+                .use { it.headers["location"] }
+                ?: return@parallelMapNotNullBlocking null
+            Video(url, quality, url, headers)
+        }
     }
 
     override fun videoListSelector() = throw UnsupportedOperationException()
@@ -418,6 +423,8 @@ class Rule34Video :
     }
 
     companion object {
+        private val FLASHVARS_URL_REGEX = Regex("""\b(video_url|video_alt_url\d*):\s*'(https?://[^']+)'""")
+
         const val PREFIX_SEARCH = "slug:"
 
         private const val PREF_QUALITY_KEY = "preferred_quality"
