@@ -42,7 +42,7 @@ class Animefenix :
 
     override val name = "AnimeFenix"
 
-    override val baseUrl = "https://animefenix2.tv"
+    override val baseUrl = "https://tvanime.tv"
 
     override val lang = "es"
 
