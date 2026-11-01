@@ -28,7 +28,7 @@ class Cimaleek :
 
     override val name = "سيما ليك"
 
-    override val baseUrl = "https://m.cimaleek.to"
+    override val baseUrl = "https://m.cimaleek.pw"
 
     override val lang = "ar"
 
