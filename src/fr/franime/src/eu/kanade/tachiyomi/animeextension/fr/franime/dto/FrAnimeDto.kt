@@ -56,6 +56,7 @@ data class Anime(
     @SerialName("__v") val uuv: Int? = null, // no idea wtf is this
     @SerialName("affiche_small") val posterSmall: String? = null,
     @SerialName("updatedDate") val updateTime: Long? = null, // deserialize as timestamp
+    @SerialName("updatedDateVF") val updateTimeVF: Long? = null,
 )
 
 @Serializable
