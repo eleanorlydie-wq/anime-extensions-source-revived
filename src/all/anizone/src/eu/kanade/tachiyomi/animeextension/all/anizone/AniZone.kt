@@ -23,10 +23,12 @@ import keiyoushi.utils.toJsonRequestBody
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
@@ -244,11 +246,15 @@ class AniZone :
         }
     }
 
-    private fun ItemDto.pickTitle(): String = titleList?.get("1")
-        ?: titleList?.get("5")
-        ?: titleList?.values?.firstOrNull { !it.isNullOrBlank() }
-        ?: mainTitle
-        ?: ""
+    private fun ItemDto.pickTitle(): String {
+        val titles = (titleList as? JsonObject).orEmpty()
+            .mapValues { (it.value as? JsonPrimitive)?.contentOrNull }
+        return titles["1"]
+            ?: titles["5"]
+            ?: titles.values.firstOrNull { !it.isNullOrBlank() }
+            ?: mainTitle
+            ?: ""
+    }
 
     // ============================ Video Links =============================
 
