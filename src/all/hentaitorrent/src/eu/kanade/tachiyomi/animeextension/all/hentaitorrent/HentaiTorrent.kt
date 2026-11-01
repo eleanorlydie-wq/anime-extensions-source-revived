@@ -29,6 +29,7 @@ import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.io.IOException
 import java.net.SocketTimeoutException
+import java.net.URLEncoder
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.cancellation.CancellationException
@@ -209,12 +210,12 @@ class HentaiTorrent :
     }
 
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
-        val encodedQuery = query.replace(" ", "+")
+        val encodedQuery = URLEncoder.encode(query.trim(), "UTF-8")
         val cat = filters.filterIsInstance<CategoriesList>().firstOrNull()
             ?.let { getCategory()[it.state].id }
 
         return when {
-            query.isNotEmpty() -> GET("$baseUrl/s.php?search=$encodedQuery&page=$page")
+            query.isNotBlank() -> GET("$baseUrl/s.php?search=$encodedQuery&page=$page")
             // "Home" has no catalog page (/catalog/0 is empty); it's the front page listing.
             cat == null || cat == "0" -> popularAnimeRequest(page)
             else -> GET("$baseUrl/catalog/$cat/page/$page")
@@ -232,7 +233,7 @@ class HentaiTorrent :
         val anime = SAnime.create()
         // Set only when found so the browse flow's title/thumbnail (from the listing) are never blanked.
         document.selectFirst("h1")?.text()?.trim()?.let { anime.title = it }
-        document.selectFirst("img[src*=pic.hentaitorrents.com]")?.attr("abs:src")?.let { anime.thumbnail_url = it }
+        document.selectFirst("div.container img[src*=/pic/]")?.attr("abs:src")?.let { anime.thumbnail_url = it }
         anime.description = document.select("div.article-content").html().replace(Regex("<(?!br\\s*/?)[^>]+>"), "").replace("<br>", "\n").replace("<br/>", "\n")
         return anime
     }
