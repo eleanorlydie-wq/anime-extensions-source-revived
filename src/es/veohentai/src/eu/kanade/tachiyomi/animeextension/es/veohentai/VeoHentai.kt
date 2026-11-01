@@ -8,13 +8,11 @@ import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
-import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.util.asJsoup
 import keiyoushi.utils.getPreferencesLazy
-import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
 import okhttp3.Response
 
@@ -44,48 +42,45 @@ open class VeoHentai :
 
     override fun animeDetailsParse(response: Response): SAnime {
         val document = response.asJsoup()
-        val animeDetails = SAnime.create().apply {
-            title = document.selectFirst(".pb-2 h1")?.text()?.trim() ?: ""
+        fun field(name: String) = document.select("dt:contains($name) + dd a").firstOrNull()?.text()
+        return SAnime.create().apply {
+            title = document.selectFirst("h1")?.text()?.trim().orEmpty()
             status = SAnime.UNKNOWN
-            description = document.select(".entry-content p").joinToString { it.text() }
-            genre = document.select(".tags a").joinToString { it.text() }
-            thumbnail_url = document.selectFirst("#thumbnail-post img")?.getImageUrl()
-            document.select(".gap-4 div").map { it.text() }.map { textContent ->
-                when {
-                    "Marca" in textContent -> author = textContent.substringAfter("Marca").trim()
-                }
-            }
+            description = field("Serie")?.let { "Serie: $it" }
+            genre = document.select("a[href^=/genero/]").eachText().distinct().joinToString()
+            thumbnail_url = document.selectFirst("meta[property=og:image]")?.attr("abs:content")
+            author = field("Estudio")
         }
-        return animeDetails
     }
 
-    override fun popularAnimeRequest(page: Int) = GET("$baseUrl/mas-visitados/page/$page", headers)
+    override fun popularAnimeRequest(page: Int) = GET("$baseUrl/explorar/?orden=vistas&pagina=$page", headers)
 
     override fun popularAnimeParse(response: Response): AnimesPage {
         val document = response.asJsoup()
-        val elements = document.select(".gap-6 a")
-        val nextPage = document.select(".nav-links a:contains(Next)").any()
-        val animeList = elements.map { element ->
+        val currentPage = response.request.url.queryParameter("pagina")?.toIntOrNull() ?: 1
+        val animeList = document.select("a.group[href^=/ver/]").map { element ->
+            val image = element.selectFirst("img")
             SAnime.create().apply {
-                title = element.selectFirst("h2")?.text()?.trim() ?: ""
-                thumbnail_url = element.selectFirst("img:not([class*=cover])")?.getImageUrl()
+                title = image?.attr("alt")?.trim().orEmpty()
+                thumbnail_url = image?.getImageUrl()
                 setUrlWithoutDomain(element.attr("abs:href"))
             }
         }
+        val nextPage = document.selectFirst("a[href*=pagina=${currentPage + 1}]") != null
         return AnimesPage(animeList, nextPage)
     }
 
     override fun latestUpdatesParse(response: Response) = popularAnimeParse(response)
 
-    override fun latestUpdatesRequest(page: Int) = GET("$baseUrl/page/$page", headers)
+    override fun latestUpdatesRequest(page: Int) = GET("$baseUrl/explorar/?pagina=$page", headers)
 
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
         val filterList = if (filters.isEmpty()) getFilterList() else filters
         val genreFilter = filterList.find { it is GenreFilter } as GenreFilter
 
         return when {
-            query.isNotBlank() -> GET("$baseUrl/page/$page/?s=$query", headers)
-            genreFilter.state != 0 -> GET("$baseUrl/${genreFilter.toUriPart()}/page/$page", headers)
+            query.isNotBlank() -> GET("$baseUrl/buscar/?q=$query", headers)
+            genreFilter.state != 0 -> GET("$baseUrl/${genreFilter.toUriPart()}/?pagina=$page", headers)
             else -> popularAnimeRequest(page)
         }
     }
@@ -103,38 +98,9 @@ open class VeoHentai :
         )
     }
 
-    override fun videoListParse(response: Response): List<Video> {
-        val document = response.asJsoup()
-        val frame = document.selectFirst("iframe[webkitallowfullscreen]")
-        val src = frame?.attr("abs:src")?.takeIf { !it.startsWith("about") }
-        val dataLitespeedSrc = frame?.attr("data-litespeed-src")?.takeIf { !it.startsWith("about") }
-        val link = when {
-            src != null -> src
-            dataLitespeedSrc != null -> dataLitespeedSrc
-            else -> return emptyList()
-        }
-
-        val docPlayer = client.newCall(GET(link)).execute().asJsoup()
-        val dataId = docPlayer.selectFirst("[data-id]")?.attr("data-id") ?: return emptyList()
-        val host = docPlayer.location().toHttpUrl().host
-        val realPlayer = client.newCall(GET("https://$host$dataId")).execute().asJsoup()
-        val scriptPlayer = realPlayer.selectFirst("script:containsData(jwplayer.key)")?.data() ?: return emptyList()
-
-        val subs = scriptPlayer.substringAfter("tracks:").substringBefore("]").getItems().map {
-            it.substringAfter("file\": \"").substringAfter("file: \"").substringBefore("\"") to
-                it.substringAfter("label\": \"").substringAfter("label: \"").substringBefore("\"")
-        }.filter { (file, _) -> file.isNotEmpty() }.map { (file, label) -> Track(file, label) }
-
-        return scriptPlayer.substringAfter("sources:").substringBefore("]").getItems().map {
-            val file = it.substringAfter("file\": \"").substringAfter("file: \"").substringBefore("\"")
-            val type = when {
-                file.contains(".m3u") -> "HSL"
-                file.contains(".mp4") -> "MP4"
-                else -> ""
-            }
-            Video(file, "VeoHentai:$type", file, subtitleTracks = subs)
-        }
-    }
+    override fun videoListParse(response: Response): List<Video> = throw Exception(
+        "El reproductor de VeoHentai (HentaiPlayer) ahora exige verificación del navegador; ábrelo en WebView",
+    )
 
     override fun List<Video>.sort(): List<Video> {
         val quality = preferences.getString(PREF_QUALITY_KEY, PREF_QUALITY_DEFAULT)!!
@@ -219,11 +185,6 @@ open class VeoHentai :
     protected open fun org.jsoup.nodes.Element.isValidUrl(attrName: String): Boolean {
         if (!hasAttr(attrName)) return false
         return !attr(attrName).contains("data:image/")
-    }
-
-    private fun String.getItems(): List<String> {
-        val pattern = "\\{([^}]*)\\}".toRegex()
-        return pattern.findAll(this).map { it.groupValues[1] }.toList()
     }
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
