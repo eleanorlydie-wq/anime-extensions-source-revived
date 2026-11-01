@@ -1,6 +1,5 @@
 package eu.kanade.tachiyomi.animeextension.ar.anime4up
 
-import android.util.Base64
 import androidx.preference.ListPreference
 import androidx.preference.PreferenceScreen
 import aniyomi.lib.doodextractor.DoodExtractor
@@ -23,13 +22,10 @@ import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.util.asJsoup
 import keiyoushi.utils.getPreferencesLazy
 import keiyoushi.utils.parallelCatchingFlatMapBlocking
-import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
 import okhttp3.Request
 import okhttp3.Response
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
-import uy.kohesive.injekt.injectLazy
 
 class Anime4Up :
     ParsedAnimeHttpSource(),
@@ -43,14 +39,12 @@ class Anime4Up :
 
     override val supportsLatest = false
 
-    private val json: Json by injectLazy()
-
     private val preferences by getPreferencesLazy()
 
     override fun headersBuilder() = super.headersBuilder().add("Referer", "$baseUrl/")
 
     // ============================== Popular ===============================
-    override fun popularAnimeRequest(page: Int) = GET("$baseUrl/anime-list-3/page/$page/")
+    override fun popularAnimeRequest(page: Int) = GET("$baseUrl/%d9%82%d8%a7%d8%a6%d9%85%d8%a9-%d8%a7%d9%84%d8%a7%d9%86%d9%85%d9%8a/page/$page/")
 
     override fun popularAnimeSelector() = "div.anime-list-content div.anime-card-poster > div.hover"
 
@@ -123,9 +117,9 @@ class Anime4Up :
     }
 
     // ============================== Episodes ==============================
-    override fun episodeListParse(response: Response) = super.episodeListParse(response).reversed()
+    override fun episodeListParse(response: Response) = super.episodeListParse(response).distinctBy { it.url }.reversed()
 
-    override fun episodeListSelector() = "div.ehover6 > div.episodes-card-title > h3 > a, ul.all-episodes-list li > a"
+    override fun episodeListSelector() = "#episodesList div.ep_num > a, a.anime-first-ep[href*=/episode/]"
 
     override fun episodeFromElement(element: Element) = SEpisode.create().apply {
         setUrlWithoutDomain(element.attr("href"))
@@ -133,57 +127,11 @@ class Anime4Up :
         episode_number = name.substringAfterLast(" ").toFloatOrNull() ?: 0F
     }
 
-    @Serializable
-    data class Qualities(
-        val fhd: Map<String, String> = emptyMap(),
-        val hd: Map<String, String> = emptyMap(),
-        val sd: Map<String, String> = emptyMap(),
-    )
-
-    @Serializable
-    data class WatchServerData(
-        val name: String,
-        val link: String,
-        val order: String,
-        val icon: Boolean,
-    )
-
-    override fun videoListParse(response: Response): List<Video> {
-        val document = response.asJsoup()
-
-        // Decode base64 for each quality level
-        val base64Fhd = document.selectFirst(".WatchServersEmbed form input[name='watch_fhd']")
-            ?.attr("value")
-            ?.let { String(Base64.decode(it, Base64.DEFAULT)) }
-            ?: "[]"
-
-        val base64Hd = document.selectFirst(".WatchServersEmbed form input[name='watch_hd']")
-            ?.attr("value")
-            ?.let { String(Base64.decode(it, Base64.DEFAULT)) }
-            ?: "[]"
-
-        val base64Sd = document.selectFirst(".WatchServersEmbed form input[name='watch_SD']")
-            ?.attr("value")
-            ?.let { String(Base64.decode(it, Base64.DEFAULT)) }
-            ?: "[]"
-
-        // Parse the base64 decoded strings into lists of WatchServerData
-        val parsedFhd = json.decodeFromString<List<WatchServerData>>(base64Fhd)
-        val parsedHd = json.decodeFromString<List<WatchServerData>>(base64Hd)
-        val parsedSd = json.decodeFromString<List<WatchServerData>>(base64Sd)
-
-        // Convert to the old Qualities structure
-        val qualities = Qualities(
-            fhd = parsedFhd.associate { it.name to it.link },
-            hd = parsedHd.associate { it.name to it.link },
-            sd = parsedSd.associate { it.name to it.link },
-        )
-
-        // Use the same logic as the old implementation
-        val streamLinks = with(qualities) { fhd + hd + sd }
-
-        return streamLinks.values.distinct().parallelCatchingFlatMapBlocking(::extractVideos)
-    }
+    override fun videoListParse(response: Response): List<Video> = response.asJsoup()
+        .select("li[data-watch]")
+        .map { it.attr("abs:data-watch") }
+        .distinct()
+        .parallelCatchingFlatMapBlocking(::extractVideos)
 
     private val uqloadExtractor by lazy { UqloadExtractor(client) }
     private val doodExtractor by lazy { DoodExtractor(client) }
