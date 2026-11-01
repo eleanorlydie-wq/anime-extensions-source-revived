@@ -292,6 +292,10 @@ class AllAnime :
         val responseBody = client.newCall(videoListRequest(episode))
             .awaitSuccess().bodyString()
 
+        if ("AA_CRYPTO_MISSING" in responseBody) {
+            throw Exception("AllAnime now rejects stream requests from this extension (AA_CRYPTO_MISSING)")
+        }
+
         // 1. Check for encrypted response (tobeparsed present)
         val tobeparsed = runCatching {
             responseBody.parseAs<EncryptedEpisodeResult>().data.tobeparsed
