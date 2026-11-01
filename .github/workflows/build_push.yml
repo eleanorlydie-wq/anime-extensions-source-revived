@@ -118,8 +118,8 @@ jobs:
           chmod 600 signingkey.jks
 
       - name: Build extensions (${{ matrix.chunk.number }})
+        uses: ./.github/actions/build-extensions
         env:
-          MODULES: ${{ join(matrix.chunk.modules, ' ') }}
           ALIAS: ${{ secrets.ALIAS }}
           KEY_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
@@ -128,8 +128,8 @@ jobs:
           KISSKH_SUB_API: ${{ secrets.KISSKH_SUB_API }}
           KAISVA: ${{ secrets.KAISVA }}
           TMDB_API: ${{ secrets.TMDB_API }}
-        run: |
-          ./gradlew --no-configuration-cache $MODULES
+        with:
+          args: --no-configuration-cache ${{ join(matrix.chunk.modules, ' ') }}
 
       - name: Upload APKs (${{ matrix.chunk.number }})
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
