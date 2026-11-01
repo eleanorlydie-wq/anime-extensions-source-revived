@@ -19,7 +19,7 @@ class VoirCartoon :
     DooPlay(
         "fr",
         "VoirCartoon",
-        "https://voircartoon.fr",
+        "https://www.voircartoon.fr",
     ) {
     // ============================== Popular ===============================
     override fun popularAnimeRequest(page: Int) = GET("$baseUrl/tendance/page/$page/", headers)
