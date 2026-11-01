@@ -35,7 +35,7 @@ class NyaaTorrent(extName: String, private val extURL: String, private val extId
     override val name = extName
 
     override val baseUrl by lazy {
-        preferences.getString(PREF_DOMAIN_KEY, extURL)?.trim().takeIf { it?.isNotEmpty() ?: false } ?: extURL
+        (preferences.getString(PREF_DOMAIN_KEY, extURL)?.trim().takeIf { it?.isNotEmpty() ?: false } ?: extURL).removeSuffix("/")
     }
 
     override val lang = "all"
@@ -52,8 +52,9 @@ class NyaaTorrent(extName: String, private val extURL: String, private val extId
     private val animeNextPageSelector = "ul.pagination a[rel='next']"
     private fun animeFromElement(element: Element): SAnime {
         val anime = SAnime.create()
-        anime.setUrlWithoutDomain(element.select("td:nth-child(2) a").attr("href"))
-        anime.title = element.select("td:nth-child(2) a:not(.comments)").attr("title")
+        val link = element.select("td:nth-child(2) a:not(.comments)")
+        anime.setUrlWithoutDomain(link.attr("href"))
+        anime.title = link.attr("title")
         // anime.thumbnail_url = "$baseUrl/" + element.select("td:nth-child(1) img").attr("src")
         return anime
     }
@@ -91,15 +92,19 @@ class NyaaTorrent(extName: String, private val extURL: String, private val extId
         }
         if (query.startsWith(PREFIX_SEARCH)) {
             val id = query.removePrefix(PREFIX_SEARCH)
-            return client.newCall(GET("$baseUrl/anime/$id"))
+            return client.newCall(GET("$baseUrl/view/$id"))
                 .awaitSuccess()
-                .use(::searchAnimeByIdParse)
+                .use { searchAnimeByIdParse(it, id) }
         }
         return super.getSearchAnime(page, query, filters)
     }
 
-    private fun searchAnimeByIdParse(response: Response): AnimesPage {
-        val details = animeDetailsParse(response.use { it.asJsoup() })
+    private fun searchAnimeByIdParse(response: Response, id: String): AnimesPage {
+        val document = response.asJsoup()
+        val details = animeDetailsParse(document).apply {
+            title = document.selectFirst("h3.panel-title")?.text().orEmpty()
+            url = "/view/$id"
+        }
         return AnimesPage(listOf(details), false)
     }
 
