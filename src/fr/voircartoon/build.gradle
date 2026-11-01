@@ -2,8 +2,8 @@ ext {
     extName = 'VoirCartoon'
     extClass = '.VoirCartoon'
     themePkg = 'dooplay'
-    baseUrl = 'https://voircartoon.fr'
-    overrideVersionCode = 15
+    baseUrl = 'https://www.voircartoon.fr'
+    overrideVersionCode = 16
     isNsfw = true
 }
 
