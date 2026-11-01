@@ -44,7 +44,7 @@ class CineCalidad :
 
     override val name = "CineCalidad"
 
-    override val baseUrl = "https://www.cinecalidad.ec"
+    override val baseUrl = "https://www.cinecalidad.am"
 
     override val lang = "es"
 
