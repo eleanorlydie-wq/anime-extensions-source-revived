@@ -60,13 +60,19 @@ class AnimesDigital :
     override fun popularAnimeFromElement(element: Element) = latestUpdatesFromElement(element)
     override fun popularAnimeNextPageSelector() = null
 
+    // The home page lists an episode both under its top releases and its latest episodes.
+    override fun popularAnimeParse(response: Response): AnimesPage {
+        val page = super.popularAnimeParse(response)
+        return AnimesPage(page.animes.distinctBy { it.url }, page.hasNextPage)
+    }
+
     // =============================== Latest ===============================
     override suspend fun getLatestUpdates(page: Int): AnimesPage {
         animesDigitalFilters.fetchFilters()
         return super.getLatestUpdates(page)
     }
 
-    override fun latestUpdatesRequest(page: Int) = GET("$baseUrl/lancamentos/page/$page")
+    override fun latestUpdatesRequest(page: Int) = GET("$baseUrl/lancamentos01/page/$page")
 
     override fun latestUpdatesSelector() = "div.b_flex > div.itemE > a"
 
@@ -90,9 +96,9 @@ class AnimesDigital :
             if (url.host != baseUrl.toHttpUrl().host) {
                 throw Exception("Unsupported url")
             }
-            val id = url.pathSegments.getOrNull(2)
-                ?: throw Exception("Unsupported url")
-            return getSearchAnime(page, "${PREFIX_SEARCH}$id", filters)
+            return client.newCall(GET(url, headers))
+                .awaitSuccess()
+                .use(::searchAnimeByIdParse)
         }
 
         if (query.startsWith(PREFIX_SEARCH)) {
@@ -107,7 +113,6 @@ class AnimesDigital :
 
     private fun searchAnimeByIdParse(response: Response): AnimesPage {
         val details = animeDetailsParse(response.useAsJsoup()).apply {
-            setUrlWithoutDomain(response.request.url.toString())
             initialized = true
         }
 
@@ -115,7 +120,7 @@ class AnimesDigital :
     }
 
     private val searchToken by lazy {
-        client.newCall(GET("$baseUrl/animes-legendados-online")).execute().useAsJsoup()
+        client.newCall(GET("$baseUrl/animes-legendados-online001")).execute().useAsJsoup()
             .selectFirst("div.menu_filter_box")!!
             .attr("data-secury")
     }
@@ -175,27 +180,36 @@ class AnimesDigital :
     override fun animeDetailsParse(document: Document) = SAnime.create().apply {
         val doc = getRealDoc(document)
         setUrlWithoutDomain(doc.location())
-        thumbnail_url = doc.selectFirst("div.poster > img")?.attr("data-lazy-src")
-        status = when (doc.selectFirst("div.clw > div.playon")?.text()) {
-            "Em Lançamento" -> SAnime.ONGOING
-            "Completo" -> SAnime.COMPLETED
-            else -> SAnime.UNKNOWN
+        thumbnail_url = doc.selectFirst("div.poster > img")?.let {
+            it.absUrl("data-lazy-src").ifEmpty { it.absUrl("src") }
         }
 
-        with(doc.selectFirst("div.crw > div.dados")!!) {
-            artist = getInfo("Estúdio")
-            author = getInfo("Autor") ?: getInfo("Diretor")
-
-            title = selectFirst("h1")!!.text()
-            genre = select("div.genre a").eachText().joinToString()
-
-            description = selectFirst("div.sinopse")?.text()
+        // Movie pages have the player and a shorter info box instead of the series layout.
+        val series = doc.selectFirst("div.crw > div.dados")
+        if (series == null) {
+            title = doc.selectFirst("div.b_itens h1")!!.text()
+            return@apply
         }
+
+        artist = series.getInfo("Estúdio")
+        author = series.getInfo("Autor") ?: series.getInfo("Diretor")
+        title = series.selectFirst("h1")!!.text()
+        genre = series.select("div.genre a").eachText().joinToString()
+        description = series.selectFirst("div.sinopse")?.text()
     }
 
     // ============================== Episodes ==============================
     override fun episodeListParse(response: Response): List<SEpisode> {
         val doc = getRealDoc(response.useAsJsoup())
+        if (doc.selectFirst("div#player") != null) {
+            return listOf(
+                SEpisode.create().apply {
+                    setUrlWithoutDomain(doc.location())
+                    name = doc.selectFirst("div.b_itens h1")?.text() ?: "Filme"
+                    episode_number = 1F
+                },
+            )
+        }
         val episodes = mutableListOf<SEpisode>()
         episodes += doc.select(episodeListSelector()).map(::episodeFromElement)
         val lastPage =
@@ -216,7 +230,6 @@ class AnimesDigital :
     override fun episodeFromElement(element: Element) = SEpisode.create().apply {
         setUrlWithoutDomain(element.attr("href"))
         name = element.selectFirst("div.title_anime")!!.text()
-        element.selectFirst("div.title_anime")!!.text()
         episode_number = name.substringAfterLast(" ").toFloatOrNull() ?: 1F
         date_upload = element.selectFirst("div.date")?.text()?.let { parseDate(it) } ?: 0L
     }

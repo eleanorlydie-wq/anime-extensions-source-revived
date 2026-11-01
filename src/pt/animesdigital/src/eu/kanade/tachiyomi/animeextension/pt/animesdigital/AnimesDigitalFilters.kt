@@ -15,9 +15,9 @@ class AnimesDigitalFilters(
     private var error = false
 
     @Volatile
-    private lateinit var filterList: AnimeFilterList
+    private lateinit var genres: Array<Pair<String, String>>
 
-    fun filterInitialized(): Boolean = this::filterList.isInitialized
+    fun filterInitialized(): Boolean = this::genres.isInitialized
 
     open class QueryPartFilter(
         displayName: String,
@@ -62,7 +62,15 @@ class AnimesDigitalFilters(
     fun getFilterList(): AnimeFilterList = if (error) {
         AnimeFilterList(AnimeFilter.Header("Erro ao buscar os filtros."))
     } else if (filterInitialized()) {
-        filterList
+        // A new list each time, or the app's reset button would get the old selection back.
+        AnimeFilterList(
+            InitialLetterFilter(),
+            OrderFilter(),
+            AudioFilter(),
+            TypeFilter(),
+            AnimeFilter.Separator(),
+            GenresFilter(genres),
+        )
     } else {
         AnimeFilterList(AnimeFilter.Header("Aperte 'Redefinir' para tentar mostrar os filtros"))
     }
@@ -72,41 +80,28 @@ class AnimesDigitalFilters(
         if (!filterInitialized()) {
             runCatching {
                 error = false
-                val document = client.newCall(GET("$baseUrl/animes-legendados-online"))
+                val document = client.newCall(GET("$baseUrl/animes-legendados-online001"))
                     .execute()
                     .useAsJsoup()
-                filterList = filtersParse(document)
+                genres = genresParse(document)
             }.onFailure {
                 error = true
             }
         }
     }
 
-    private fun filtersParse(document: Document): AnimeFilterList {
-        val genres = document.select("li.filter_genre")
-            .mapNotNull { element ->
-                val name = element.text().trim()
-                val value = element.attr("data-value")
-                if (name.isNotEmpty() && value.isNotEmpty()) {
-                    Pair(name, value)
-                } else {
-                    null
-                }
+    private fun genresParse(document: Document): Array<Pair<String, String>> = document.select("li.filter_genre")
+        .mapNotNull { element ->
+            val name = element.text().trim()
+            val value = element.attr("data-value")
+            if (name.isNotEmpty() && value.isNotEmpty()) {
+                Pair(name, value)
+            } else {
+                null
             }
-            .sortedBy { it.first }
-            .toTypedArray()
-
-        val genresFilters = GenresFilter(genres)
-
-        return AnimeFilterList(
-            InitialLetterFilter(),
-            OrderFilter(),
-            AudioFilter(),
-            TypeFilter(),
-            AnimeFilter.Separator(),
-            genresFilters,
-        )
-    }
+        }
+        .sortedBy { it.first }
+        .toTypedArray()
 
     data class FilterSearchParams(
         val initialLetter: String = "0",
