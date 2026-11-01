@@ -29,7 +29,7 @@ import eu.kanade.tachiyomi.util.asJsoup
 import keiyoushi.utils.catchingFlatMapBlocking
 import keiyoushi.utils.getPreferencesLazy
 import keiyoushi.utils.parseAs
-import keiyoushi.utils.toJsonRequestBody
+import keiyoushi.utils.toJsonBody
 import keiyoushi.utils.useAsJsoup
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -158,7 +158,7 @@ class AnimeMovil :
                 val requestBody = "{\"show\": \"$sid\",\"temporada\": \"$t\"}"
                 val request = Request.Builder()
                     .url("https://animemeow.xyz/api/obtener_episodios_x_temporada/")
-                    .post(requestBody.toJsonRequestBody())
+                    .post(requestBody.toJsonBody())
                     .header("authority", response.request.url.host)
                     .header("origin", "https://${response.request.url.host}")
                     .header("referer", response.request.url.toString())
