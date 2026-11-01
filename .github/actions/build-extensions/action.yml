@@ -1,0 +1,50 @@
+name: Build extensions
+description: >
+  Runs Gradle with a Maven Central mirror in front and retries when a dependency download fails for
+  a transient reason (HTTP 429/5xx, resets), so a rate limit doesn't fail a whole chunk.
+
+inputs:
+  args:
+    description: Arguments for gradlew (tasks and flags), separated by spaces
+    required: true
+  attempts:
+    description: How many times to try before giving up
+    default: "3"
+
+runs:
+  using: composite
+  steps:
+    - name: Add Maven Central mirror
+      shell: bash
+      run: |
+        # An init script rather than settings.gradle.kts: it only applies to CI, and editing core
+        # build files would make the next push rebuild every extension.
+        mkdir -p ~/.gradle/init.d
+        cp "$GITHUB_ACTION_PATH/maven-central-mirror.init.gradle" ~/.gradle/init.d/
+
+    - name: Run Gradle
+      shell: bash
+      env:
+        GRADLE_ARGS: ${{ inputs.args }}
+        ATTEMPTS: ${{ inputs.attempts }}
+      run: |
+        # The default shell options would stop at the first failed attempt.
+        set +eo pipefail
+        # Only network failures are worth another go; anything else (a compile error, say) would
+        # just fail again. Finished tasks stay up to date, so a retry resumes where this stopped.
+        transient='Could not (GET|HEAD) |Received status code (408|425|429|5[0-9][0-9])|Read timed out|Connect timed out|Connection (reset|refused|timed out)|Remote host terminated|Premature end of'
+        log="$(mktemp)"
+        for attempt in $(seq 1 "$ATTEMPTS"); do
+          # shellcheck disable=SC2086 # the arguments are meant to split
+          ./gradlew $GRADLE_ARGS 2>&1 | tee "$log"
+          status=${PIPESTATUS[0]}
+          [ "$status" -eq 0 ] && exit 0
+          if ! grep -qE "$transient" "$log"; then
+            exit "$status"
+          fi
+          [ "$attempt" -lt "$ATTEMPTS" ] || break
+          delay=$((attempt * attempt * 60))
+          echo "::warning::Dependency download failed (attempt $attempt of $ATTEMPTS); retrying in ${delay}s"
+          sleep "$delay"
+        done
+        exit "$status"

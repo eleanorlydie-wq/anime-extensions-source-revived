@@ -1,0 +1,17 @@
+// Google's mirror of Maven Central isn't subject to Sonatype's rate limits. Modules it doesn't have
+// fall through to the repositories declared in settings.gradle.kts. Plugin repositories stay as they
+// are: declaring one here would turn off the default plugin portal in builds that rely on it.
+beforeSettings { settings ->
+    settings.dependencyResolutionManagement.repositories.maven {
+        name = "MavenCentralMirror"
+        url = uri("https://maven-central.storage-download.googleapis.com/maven2/")
+    }
+}
+
+// Maven Central only sees what the mirror lacks. JitPack artifacts are never there, so don't let
+// looking for them on the way to JitPack use up the rate limit.
+settingsEvaluated { settings ->
+    settings.dependencyResolutionManagement.repositories.withType(MavenArtifactRepository).matching { it.url.host == "repo.maven.apache.org" }.configureEach { central ->
+        central.content { it.excludeGroupByRegex "com\\.github\\..*" }
+    }
+}
