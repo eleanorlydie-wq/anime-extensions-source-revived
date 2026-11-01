@@ -1,7 +1,6 @@
 package eu.kanade.tachiyomi.animeextension.en.kisskh
 
 import android.net.Uri
-import android.util.Log
 import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.awaitSuccess
@@ -74,11 +73,8 @@ class SubDecryptor(private val client: OkHttpClient, private val headers: Header
         val encryptedBytes = Base64.decode(encryptedB64) // Decode Base64 input
 
         for ((keyBytes, ivBytes) in keyIvPairs) {
-            try {
-                return decryptWithKeyIv(keyBytes, ivBytes, encryptedBytes)
-            } catch (ex: Exception) {
-                Log.e("KissKH:SubDecryptor", "Decryption attempt failed with key/IV pair. Error: ${ex.message}", ex)
-            }
+            // Each subtitle line can need several tries, so failed attempts are expected and not logged.
+            runCatching { return decryptWithKeyIv(keyBytes, ivBytes, encryptedBytes) }
         }
         throw IOException("Decryption failed: All keys/IVs failed")
     }
