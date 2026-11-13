@@ -41,6 +41,25 @@ class HentaiMama :
 
     private val preferences by getPreferencesLazy()
 
+    // Covers saved before the site's redesign point at WordPress resized variants
+    // (e.g. poster-185x278.jpg) that now 404. The app fetches covers through this
+    // client and never refreshes a stored thumbnail from browse results, so retry
+    // such a 404 with the original upload, which still exists.
+    override val client = network.client.newBuilder()
+        .addInterceptor { chain ->
+            val request = chain.request()
+            val response = chain.proceed(request)
+            val url = request.url
+            if (response.code != 404 || !url.encodedPath.startsWith("/wp-content/uploads/")) {
+                return@addInterceptor response
+            }
+            val original = url.encodedPath.replace(RESIZED_IMAGE_REGEX, "$1")
+            if (original == url.encodedPath) return@addInterceptor response
+            response.close()
+            chain.proceed(request.newBuilder().url(url.newBuilder().encodedPath(original).build()).build())
+        }
+        .build()
+
     override fun headersBuilder(): Headers.Builder = super.headersBuilder()
         .add("Referer", baseUrl)
 
@@ -362,6 +381,8 @@ class HentaiMama :
         StudioFilter(studioValues),
     )
     companion object {
+        private val RESIZED_IMAGE_REGEX = Regex("""-\d+x\d+(\.(?:jpe?g|png|webp|gif))$""", RegexOption.IGNORE_CASE)
+
         private const val PREF_QUALITY_KEY = "preferred_quality"
         private const val PREF_QUALITY_TITLE = "Preferred video quality"
         private const val NEXT_PAGE_SELECTOR = "a.dt-pg-next"

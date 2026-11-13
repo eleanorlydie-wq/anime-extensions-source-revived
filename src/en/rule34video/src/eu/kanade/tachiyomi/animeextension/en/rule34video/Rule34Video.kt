@@ -59,13 +59,21 @@ class Rule34Video :
         GET("$baseUrl/latest-updates/$page/")
     }
 
-    override fun popularAnimeSelector() = "div.item.thumb"
+    // Only real video cards: the grid also holds ad cards (a.th pointing off-site).
+    override fun popularAnimeSelector() = "div.item.thumb:not(:has(div.item.thumb)):has(a.th[href*=/video/])"
 
     override fun popularAnimeFromElement(element: Element) = SAnime.create().apply {
-        setUrlWithoutDomain(element.selectFirst("a.th")!!.attr("href"))
-        title = element.selectFirst("a.th div.thumb_title")!!.text()
-        thumbnail_url = element.selectFirst("a.th div.img img")?.attr("abs:data-original")
+        val link = element.selectFirst("a.th[href*=/video/]")!!
+        setUrlWithoutDomain(link.attr("href"))
+        title = link.selectFirst("div.thumb_title")!!.text()
+        thumbnail_url = link.selectFirst("div.img img")?.thumbnailUrl()
     }
+
+    // Above-the-fold cards carry the real URL in src; lazy ones put a 1x1 data: GIF
+    // in src and the real URL in data-rd-src (data-original is the older lazy attr).
+    private fun Element.thumbnailUrl(): String? = sequenceOf("data-rd-src", "data-original", "src", "data-rd-jpg")
+        .map { attr("abs:$it") }
+        .firstOrNull { it.startsWith("http") }
 
     override fun popularAnimeNextPageSelector() = "div.item.pager.next a"
 
